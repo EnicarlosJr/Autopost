@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="pt-BR">
+<head><meta charset="utf-8"><title>Autopost: opções</title><link rel="stylesheet" href="popup.css">
+<style>body{width:auto;max-width:520px;margin:24px auto}main{background:#fff;border-radius:10px}.check{display:flex;gap:8px;align-items:center;font-weight:600}.check input{width:auto;margin:0}</style></head>
+<body>
+  <header><span class="logo">⚡</span> Autopost: opções da extensão</header>
+  <main>
+    <p id="state" class="status"></p>
+    <label class="check"><input id="autoSend" type="checkbox"> Enviar a fila automaticamente, mesmo com o painel fechado</label>
+    <p class="hint">Precisa do WhatsApp Web aberto em uma aba deste Chrome. A extensão confere a fila a cada 30 segundos.</p>
+    <label>Intervalo entre mensagens (segundos) <input id="interval" type="number" min="20" step="5"></label>
+    <label>Endereço da API <input id="apiBase" type="url"></label>
+    <p class="hint">O painel informa este endereço sozinho ao ser aberto. Mude só se a API estiver em outro lugar.</p>
+    <button id="save">Salvar</button>
+    <p id="result" class="result" hidden></p>
+  </main>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

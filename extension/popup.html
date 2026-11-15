@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header><span class="logo" aria-hidden="true">%</span> Autopost</header>
+  <main>
+    <p id="status" class="status">Lendo a página…</p>
+    <section id="product" hidden>
+      <div class="preview">
+        <img id="image" alt="">
+        <div>
+          <h1 id="title"></h1>
+          <p id="old" class="old" hidden></p>
+          <p id="price" class="price"></p>
+        </div>
+      </div>
+      <label>Link de afiliado
+        <input id="affiliate" type="url" placeholder="https://meli.la/...">
+      </label>
+      <p class="hint">Sem link de afiliado, a oferta usa o link do produto e você não recebe comissão.</p>
+      <div class="row">
+        <label>Categoria <input id="category" type="text" placeholder="Ex.: Casa"></label>
+        <label>Marketplace <input id="marketplace" type="text"></label>
+      </div>
+      <label>Grupo do WhatsApp <input id="group" type="text" placeholder="Nome exato do grupo"></label>
+      <button id="enqueue">Cadastrar e pôr na fila</button>
+      <button id="save" class="secondary">Só cadastrar</button>
+    </section>
+    <p id="result" class="result" hidden></p>
+    <a id="panel" href="#" class="panel">Abrir painel do Autopost</a>
+  </main>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

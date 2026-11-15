@@ -1,0 +1,59 @@
+{
+  "manifest_version": 3,
+  "name": "Autopost - Envio pelo WhatsApp Web",
+  "version": "2.5.2",
+  "description": "Cadastra produtos no Autopost a partir da página da loja, lê preços pelo seu navegador e envia as ofertas pela sua aba do WhatsApp Web.",
+  "permissions": [
+    "tabs",
+    "scripting",
+    "storage",
+    "activeTab",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://web.whatsapp.com/*",
+    "http://localhost:8000/*",
+    "http://127.0.0.1:8000/*",
+    "https://*.mercadolivre.com.br/*",
+    "https://*.mercadolibre.com/*",
+    "https://meli.la/*",
+    "https://*.amazon.com.br/*",
+    "https://amzn.to/*",
+    "https://*.magazineluiza.com.br/*",
+    "https://*.magalu.com/*",
+    "https://*.shopee.com.br/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://localhost:5173/*",
+        "http://127.0.0.1:5173/*"
+      ],
+      "js": [
+        "bridge.js"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "action": {
+    "default_title": "Cadastrar no Autopost",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png",
+      "48": "icons/48.png",
+      "128": "icons/128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "options_page": "options.html"
+}

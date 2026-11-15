@@ -1,0 +1,20 @@
+<!doctype html><html><body>
+<div id="side"><div><input type="text" role="textbox" aria-label="Pesquisar ou começar uma nova conversa" id="search"></div><div id="pane-side" role="grid"></div></div>
+<div id="mainwrap"></div>
+<script>
+const all=['Família','Trabalho','Floripa 2032️','Floripa 2032 Avisos'];
+window.SENT=[];
+document.addEventListener('paste',e=>{const d=e.clipboardData;if(d&&d.files&&d.files.length&&e.target.id==='composer'){e.preventDefault();openDialog(d.files[0]);return;}const t=d&&d.getData('text/plain');if(t){e.preventDefault();e.target.innerText=t;if(e.target.id==='composer')mockPreview(t);}},true);
+function mockPreview(t){const m=t.match(/https?:\/\/\S+/);if(!m)return;const link=m[0];const foot=document.querySelector('#main footer');const box=document.createElement('div');box.setAttribute('data-testid','compose-box-link-preview');foot.prepend(box);setTimeout(()=>{box.innerHTML='<span data-testid="link-preview-title">'+link+'</span><span>meli.la</span>';},300);if(/ok/.test(link))setTimeout(()=>{const c=document.createElement('canvas');c.width=c.height=120;c.getContext('2d').fillRect(0,0,120,120);box.innerHTML='<img src="'+c.toDataURL()+'"><span data-testid="link-preview-title">Produto de teste 500g</span>';},1500);}
+document.addEventListener('input',e=>{if(e.target.id==='composer'&&!e.target.innerText.trim())document.querySelectorAll('[data-testid="compose-box-link-preview"]').forEach(b=>b.remove());},true);
+let q='';
+function renderList(){const pane=document.getElementById('pane-side');pane.innerHTML='';const list=q?all.filter(c=>c.toLowerCase().replace(/ /g,' ').includes(q.toLowerCase())):all.slice(0,2);
+ list.forEach(c=>{const row=document.createElement('div');row.setAttribute('role','row');row.tabIndex=-1;row.innerHTML='<div><span dir="auto">'+c+'</span></div><div>12:00</div>';row.addEventListener('mousedown',()=>openChat(c));pane.appendChild(row);});}
+document.getElementById('search').addEventListener('input',e=>{q=e.target.value;setTimeout(renderList,300);});renderList();
+function openChat(name){document.getElementById('mainwrap').innerHTML='<div id="main"><header><div><span dir="auto">'+name+'</span></div></header><div id="msgs"></div><footer><div contenteditable="true" id="composer" style="min-height:20px"></div><button aria-label="Enviar" id="fsend"><span data-icon="wds-ic-send-filled"></span></button></footer></div>';
+ document.getElementById('fsend').onclick=()=>{const c=document.getElementById('composer');if(!c.innerText.trim())return;addMsg(name,c.innerText,false);c.innerText='';};}
+function addMsg(chat,text,img){const m=document.createElement('div');m.className='message-out';m.textContent=text;document.getElementById('msgs').appendChild(m);SENT.push({chat,text:text.slice(0,30),img});}
+function openDialog(file){const d=document.createElement('div');d.innerHTML='<div contenteditable="true" id="caption"></div><div role="button" aria-label="Enviar"><span data-icon="wds-ic-send-filled"></span></div>';document.body.appendChild(d);
+ const chat=document.querySelector('#main header span').textContent;d.querySelector('[role=button]').onclick=()=>{addMsg(chat,document.getElementById('caption').innerText,file.size);d.remove();};}
+window.openChat=openChat;
+</script></body></html>

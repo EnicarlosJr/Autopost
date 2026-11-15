@@ -1,0 +1,165 @@
+"""Busca de produtos dentro da campanha.
+
+O Mercado Livre não libera a busca da API e o site ignora a categoria pedida na URL. Por isso:
+1. a extensão busca cada palavra-chave no site, no Chrome do usuário;
+2. classifica cada resultado com o preditor oficial (domain_discovery) e devolve a categoria;
+3. aqui o resultado é filtrado pelas categorias da busca (com ou sem subcategorias), pelas palavras
+   excluídas e pelos filtros de preço, desconto, nota e frete.
+"""
+import json
+from datetime import datetime, timedelta, timezone
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+from app.catalog.service import plain, subtree_ids
+from app.models.campaign import Campaign, CampaignProduct, CampaignSearch, CampaignSearchResult
+from app.models.catalog import MlCategory
+from app.models.product import Product
+from app.models.search import Listing
+from app.products.urls import normalize_product_url
+from app.publications.service import record_event
+from app.searches.service import product_for, search_url, upsert_listing
+
+LEASE_MINUTES = 10
+MAX_TERMS = 10
+
+
+def now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def jl(text: str | None, default):
+    try:
+        value = json.loads(text or "")
+        return value if isinstance(value, type(default)) else default
+    except ValueError:
+        return default
+
+
+def terms_of(search: CampaignSearch) -> list[str]:
+    """Palavras-chave da busca; sem palavras, usa o nome de cada categoria escolhida."""
+    words = [w for w in jl(search.keywords, []) if isinstance(w, str) and w.strip()]
+    if not words:
+        words = [c.get("name") or c.get("id") for c in jl(search.categories, []) if isinstance(c, dict)]
+    seen, out = set(), []
+    for w in words:
+        if plain(w) not in seen:
+            seen.add(plain(w)); out.append(w.strip())
+    return out[:MAX_TERMS]
+
+
+def allowed_categories(db: Session, search: CampaignSearch) -> set[str]:
+    allowed: set[str] = set()
+    for c in jl(search.categories, []):
+        if isinstance(c, dict) and c.get("id"):
+            allowed |= subtree_ids(db, c["id"]) if c.get("include_children", True) else {c["id"]}
+    return allowed
+
+
+def reject_reason(db: Session, search: CampaignSearch, listing: Listing, allowed: set[str]) -> str:
+    filters = jl(search.filters, {})
+    if listing.price is None:
+        return "sem preço"
+    if allowed:
+        if not listing.ml_category_id:
+            if not filters.get("allow_uncategorized"):
+                return "categoria não identificada"
+        elif listing.ml_category_id not in allowed:
+            cat = db.get(MlCategory, listing.ml_category_id)
+            return f"fora das categorias ({cat.name if cat else listing.ml_category_id})"
+    title = plain(listing.title)
+    for word in jl(search.exclude_keywords, []):
+        if plain(word) and plain(word) in title:
+            return f'contém "{word}"'
+    if filters.get("min_price") is not None and listing.price < float(filters["min_price"]):
+        return "abaixo do preço mínimo"
+    if filters.get("max_price") is not None and listing.price > float(filters["max_price"]):
+        return "acima do preço máximo"
+    if filters.get("min_discount") and (listing.discount_pct or 0) < int(filters["min_discount"]):
+        return f"desconto menor que {filters['min_discount']}%"
+    if filters.get("min_rating") and (listing.rating is None or listing.rating < float(filters["min_rating"])):
+        return f"nota menor que {filters['min_rating']}"
+    if filters.get("free_shipping") and not listing.free_shipping:
+        return "sem frete grátis"
+    return ""
+
+
+def next_due(db: Session, owner_id: int) -> CampaignSearch | None:
+    """A busca de campanha mais antiga na fila (ou presa há mais de 10 min) é reservada para a extensão."""
+    stale = now() - timedelta(minutes=LEASE_MINUTES)
+    search = db.scalar(select(CampaignSearch).join(Campaign, Campaign.id == CampaignSearch.campaign_id)
+                       .where(Campaign.owner_id == owner_id,
+                              (CampaignSearch.status == "queued") | ((CampaignSearch.status == "running") & (CampaignSearch.started_at < stale)))
+                       .order_by(CampaignSearch.created_at, CampaignSearch.id).limit(1))
+    if search:
+        search.status, search.started_at = "running", now()
+    return search
+
+
+def receive(db: Session, search: CampaignSearch, items: list[dict], error: str = "") -> CampaignSearch:
+    allowed = allowed_categories(db, search)
+    seen: set[int] = set()
+    matched = 0
+    for item in items:
+        saved = upsert_listing(db, item, status="campaign")
+        if saved is None:
+            continue
+        listing = saved[0]
+        if listing.id in seen:
+            continue                      # o mesmo anúncio em duas palavras-chave conta uma vez
+        seen.add(listing.id)
+        reason = reject_reason(db, search, listing, allowed)
+        matched += not reason
+        row = db.get(CampaignSearchResult, (search.id, listing.id))
+        if row is None:
+            db.add(CampaignSearchResult(search_id=search.id, listing_id=listing.id, matched=not reason, reason=reason))
+        else:
+            row.matched, row.reason = not reason, reason
+    search.result_count, search.matched_count = len(seen), matched
+    search.finished_at = now()
+    search.error = error[:500]
+    search.status = "failed" if error and not seen else ("no_results" if not matched else "done")
+    record_event(db, "extensao", "campaigns.search", None, search.status,
+                 f"Busca #{search.id} da campanha #{search.campaign_id}: {len(seen)} resultado(s), {matched} dentro dos filtros."
+                 + (f" Erro: {error}" if error else ""))
+    db.flush()
+    return search
+
+
+def campaign_product_ids(db: Session, campaign_id: int) -> list[int]:
+    return list(db.scalars(select(CampaignProduct.product_id).where(CampaignProduct.campaign_id == campaign_id)
+                           .order_by(CampaignProduct.added_at, CampaignProduct.product_id)))
+
+
+def add_listings(db: Session, c: Campaign, listing_ids: list[int], search_id: int | None) -> dict:
+    added = skipped = 0
+    for listing in db.scalars(select(Listing).where(Listing.id.in_(listing_ids))):
+        product = product_for(db, listing)
+        db.flush()
+        if db.get(CampaignProduct, (c.id, product.id)):
+            skipped += 1; continue
+        db.add(CampaignProduct(campaign_id=c.id, product_id=product.id, search_id=search_id)); added += 1
+    if search_id and added:
+        s = db.get(CampaignSearch, search_id)
+        if s:
+            s.added_count += added
+    db.flush()
+    return {"added": added, "skipped": skipped}
+
+
+def add_products(db: Session, c: Campaign, product_ids: list[int]) -> dict:
+    added = skipped = 0
+    for pid in db.scalars(select(Product.id).where(Product.id.in_(product_ids))):
+        if db.get(CampaignProduct, (c.id, pid)):
+            skipped += 1; continue
+        db.add(CampaignProduct(campaign_id=c.id, product_id=pid)); added += 1
+    db.flush()
+    return {"added": added, "skipped": skipped}
+
+
+def in_campaign_urls(db: Session, campaign_id: int) -> set[str]:
+    return set(db.scalars(select(Product.original_url).join(CampaignProduct, CampaignProduct.product_id == Product.id)
+                          .where(CampaignProduct.campaign_id == campaign_id)))
+
+
+def listing_in_campaign(listing: Listing, urls: set[str]) -> bool:
+    return normalize_product_url(listing.url) in urls

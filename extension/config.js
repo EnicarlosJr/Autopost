@@ -1,0 +1,26 @@
+// Configuração da extensão (guardada no navegador). O painel informa o endereço da API ao abrir.
+export const DEFAULTS = {
+  apiBase: 'http://localhost:8000/api',
+  panelUrl: 'http://localhost:5173',
+  autoSend: false,          // envio automático da fila, mesmo com o painel fechado
+  sendIntervalSeconds: 60,  // intervalo entre mensagens da fila
+};
+export const MIN_INTERVAL_SECONDS = 20; // trava de segurança entre duas mensagens quaisquer
+
+export async function getConfig() {
+  const stored = await chrome.storage.local.get(Object.keys(DEFAULTS));
+  return {...DEFAULTS, ...stored};
+}
+
+export async function setConfig(values) {
+  const clean = {};
+  if (typeof values.apiBase === 'string' && /^https?:\/\//.test(values.apiBase)) clean.apiBase = values.apiBase.replace(/\/+$/, '');
+  if (typeof values.panelUrl === 'string' && /^https?:\/\//.test(values.panelUrl)) clean.panelUrl = values.panelUrl.replace(/\/+$/, '');
+  if (typeof values.autoSend === 'boolean') clean.autoSend = values.autoSend;
+  if (Number.isFinite(values.sendIntervalSeconds)) clean.sendIntervalSeconds = Math.max(MIN_INTERVAL_SECONDS, Math.round(values.sendIntervalSeconds));
+  await chrome.storage.local.set(clean);
+  return getConfig();
+}
+
+export const log = (...args) => console.info('[Autopost]', ...args);
+export const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));

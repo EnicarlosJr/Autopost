@@ -1,0 +1,101 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: autopost
+      POSTGRES_USER: autopost
+      # Defina POSTGRES_PASSWORD no .env. Só vale na criação do volume; para trocar
+      # em um banco existente, rode ALTER USER no Postgres antes de mudar o .env.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-autopost}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autopost -d autopost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  api:
+    restart: unless-stopped
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://autopost:${POSTGRES_PASSWORD:-autopost}@db:5432/autopost
+      REDIS_URL: redis://redis:6379/0
+      MEDIA_DIR: /app/storage/products
+      APP_PUBLIC_URL: http://localhost:8000
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?Set ADMIN_EMAIL in .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+      REPOST_WINDOW_HOURS: ${REPOST_WINDOW_HOURS:-24}
+      PRICE_MAX_AGE_HOURS: ${PRICE_MAX_AGE_HOURS:-6}
+    volumes:
+      - product_media:/app/storage/products
+    ports: ["8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+  worker:
+    restart: unless-stopped
+    build: ./backend
+    command: ["celery", "-A", "app.workers.celery_app:celery_app", "worker", "--loglevel=INFO"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://autopost:${POSTGRES_PASSWORD:-autopost}@db:5432/autopost
+      REDIS_URL: redis://redis:6379/0
+      MEDIA_DIR: /app/storage/products
+      APP_PUBLIC_URL: http://localhost:8000
+      REPOST_WINDOW_HOURS: ${REPOST_WINDOW_HOURS:-24}
+      PRICE_MAX_AGE_HOURS: ${PRICE_MAX_AGE_HOURS:-6}
+    volumes:
+      - product_media:/app/storage/products
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+  scheduler:
+    restart: unless-stopped
+    build: ./backend
+    # O beat roda sem privilégios: o arquivo de controle fica em /tmp (a pasta /app é somente leitura para ele).
+    command: ["celery", "-A", "app.workers.celery_app:celery_app", "beat", "--loglevel=INFO", "--schedule", "/tmp/celerybeat-schedule"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://autopost:${POSTGRES_PASSWORD:-autopost}@db:5432/autopost
+      REDIS_URL: redis://redis:6379/0
+      LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-30}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+  frontend:
+    restart: unless-stopped
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000/api}
+    ports: ["5173:80"]
+    depends_on: [api]
+volumes:
+  postgres_data:
+  redis_data:
+  product_media:

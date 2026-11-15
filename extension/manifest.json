@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Autopost - Envio pelo WhatsApp Web",
-  "version": "2.5.2",
+  "version": "2.5.3",
   "description": "Cadastra produtos no Autopost a partir da página da loja, lê preços pelo seu navegador e envia as ofertas pela sua aba do WhatsApp Web.",
   "permissions": [
     "tabs",

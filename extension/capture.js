@@ -34,21 +34,29 @@ async function generateAffiliateLink() {
     }
     return '';
   };
+  const findButton = () => document.querySelector('button.generate_link_button')
+    || [...document.querySelectorAll('nav.stripe button, .stripe button')].find(b => /compartilhar/i.test(b.textContent || ''));
+  // A barra de afiliados carrega depois da página: espera até 30 s por ela.
   let button = null;
-  for (let i = 0; i < 20 && !button; i++) {
-    button = document.querySelector('button.generate_link_button')
-      || [...document.querySelectorAll('nav.stripe button, .stripe button')].find(b => /compartilhar/i.test(b.textContent || ''));
+  for (let end = Date.now() + 30000; !button && Date.now() < end;) {
+    button = findButton();
     if (!button) await sleep(500);
   }
   if (!button) return {error: 'no_affiliate_bar'};
+  // Clica e espera o meli.la aparecer (até 40 s). Sem resposta, clica de novo a cada 12 s.
+  const already = findLink();
+  if (already) return {link: already};
   button.click();
-  for (let i = 0; i < 40; i++) {
+  let lastClick = Date.now();
+  for (let end = Date.now() + 40000; Date.now() < end;) {
     const link = findLink();
     if (link) {
+      await sleep(300);
       document.querySelector('.andes-tooltip-button-close')?.click();
       return {link};
     }
-    await sleep(250);
+    if (Date.now() - lastClick > 12000) { (findButton() || button).click(); lastClick = Date.now(); }
+    await sleep(300);
   }
   return {error: 'no_link'};
 }
@@ -78,9 +86,25 @@ export async function capture({url, affiliate = false}) {
     if (data.blocked) throw new Error('A loja pediu login ou verificação também no seu navegador. Abra o link, entre na sua conta e tente de novo.');
     if (data.price == null && !data.title) throw new Error('A página aberta não mostrou nome nem preço do produto.');
     if (affiliate) {
-      const [injection] = await chrome.scripting.executeScript({target: {tabId: tab.id}, func: generateAffiliateLink});
-      const result = injection?.result || {};
+      const generate = async () => {
+        const [injection] = await chrome.scripting.executeScript({target: {tabId: tab.id}, func: generateAffiliateLink});
+        return injection?.result || {};
+      };
+      let result = await generate();
       log('link de afiliado', result);
+      if (!result.link) {
+        // Em segundo plano o Chrome atrasa a página: tenta de novo com a aba visível por alguns segundos
+        // e depois volta para a aba em que você estava.
+        const [previous] = await chrome.tabs.query({active: true, windowId: tab.windowId});
+        try {
+          await chrome.tabs.update(tab.id, {active: true});
+          await sleep(1500);
+          result = await generate();
+          log('link de afiliado (aba visível)', result);
+        } finally {
+          if (previous && previous.id !== tab.id) chrome.tabs.update(previous.id, {active: true}).catch(() => {});
+        }
+      }
       if (result.error === 'no_affiliate_bar') {
         throw new Error('A barra de afiliados do Mercado Livre não apareceu. Entre na sua conta de afiliado neste Chrome e tente de novo.');
       }

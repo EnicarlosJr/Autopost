@@ -29,7 +29,11 @@ export type CampaignOptions = {
 };
 
 export type OfficialCategory = {id: string; include_children: boolean; name?: string; path?: string; is_leaf?: boolean; active?: boolean};
-export type SearchFilters = {min_price: number | null; max_price: number | null; min_discount: number; min_rating: number | null; free_shipping: boolean; allow_uncategorized: boolean};
+export type Gender = 'any' | 'male' | 'female';
+export const GENDER_LABEL: Record<Gender, string> = {any: 'Todos', male: 'Masculino', female: 'Feminino'};
+export type SearchFilters = {min_price: number | null; max_price: number | null; min_discount: number; min_rating: number | null; free_shipping: boolean;
+  allow_uncategorized: boolean; gender: Gender; gender_strict: boolean;
+  trust: 'off' | 'basic' | 'high' | 'custom'; min_sold: number; official_or_full: boolean; exclude_suspicious: boolean};
 export type CampaignSearch = {
   id: number; campaign_id: number; niche_id: number | null; niche_name: string; categories: OfficialCategory[]; keywords: string[];
   exclude_keywords: string[]; filters: SearchFilters; terms: string[]; status: 'queued' | 'running' | 'done' | 'no_results' | 'failed';
@@ -39,6 +43,7 @@ export type SearchResult = {
   listing_id: number; external_id: string; title: string; url: string; image_url: string; price: number | null; original_price: number | null;
   price_note: string; discount_pct: number | null; rating: number | null; sold: number | null; free_shipping: boolean; score: number; term: string;
   ml_category_id: string | null; category_name: string; category_path: string; matched: boolean; reason: string; in_campaign: boolean;
+  official_store?: boolean; fulfillment?: boolean;
 };
 export type CampaignProductRow = {
   product_id: number; title: string; image_url: string; price: number | null; original_price: number | null; price_note: string;

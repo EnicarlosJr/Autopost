@@ -33,10 +33,15 @@ export async function sendToWhatsApp({group, message, useOpenChat = false}) {
 
   busy = true;
   const [previous] = await chrome.tabs.query({active: true, windowId: tab.windowId});
+  // Janela minimizada ou coberta deixa a página "oculta": o Chrome desacelera o WhatsApp e a
+  // prévia do link (foto e título) não é montada. Durante o envio a janela fica visível e na frente.
+  const win = await chrome.windows.get(tab.windowId).catch(() => null);
+  const lastFocused = await chrome.windows.getLastFocused().catch(() => null);
   try {
-    // Deixa a aba do WhatsApp visível durante o envio: abas em segundo plano
-    // ficam "congeladas" e a prévia do link pode não carregar.
+    if (win?.state === 'minimized') await chrome.windows.update(win.id, {state: 'normal'});
+    if (win) await chrome.windows.update(win.id, {focused: true}).catch(() => {});
     if (!tab.active) await chrome.tabs.update(tab.id, {active: true});
+    await new Promise(resolve => setTimeout(resolve, 1500));   // máquinas mais lentas precisam de um respiro para redesenhar
     const [injection] = await chrome.scripting.executeScript({
       target: {tabId: tab.id},
       func: sendInWhatsApp,
@@ -53,6 +58,8 @@ export async function sendToWhatsApp({group, message, useOpenChat = false}) {
   } finally {
     busy = false;
     if (previous && previous.id !== tab.id) chrome.tabs.update(previous.id, {active: true}).catch(() => {});
+    if (win?.state === 'minimized') chrome.windows.update(win.id, {state: 'minimized'}).catch(() => {});
+    else if (lastFocused && win && lastFocused.id !== win.id) chrome.windows.update(lastFocused.id, {focused: true}).catch(() => {});
   }
 }
 
@@ -226,6 +233,7 @@ async function sendInWhatsApp(group, message, useOpenChat, dryRun = false) {
         for (const piece of [...baseText.split(' ').filter(w => w.length > 2), ...links, ...hosts]) text = text.split(piece).join(' ');
         return text.replace(/\s+/g, ' ').trim();
       };
+      let hiddenSeen = false;
       // Até 3 tentativas: se o cartão continuar provisório, apaga e cola de novo para o WhatsApp reler o link.
       for (let attempt = 1; attempt <= 3 && preview === 'sem link'; attempt++) {
         if (attempt > 1) {
@@ -235,12 +243,13 @@ async function sendInWhatsApp(group, message, useOpenChat, dryRun = false) {
         }
         const start = Date.now();
         let titledSince = 0;
-        while (Date.now() - start < 20000) {
+        while (Date.now() - start < 30000) {
+          if (document.visibilityState === 'hidden') hiddenSeen = true;
           if (cardImage() && cardText().length > 3) { preview = 'com imagem'; await sleep(800); break; }
           if (cardText().length > 3) {
             // Já tem título de verdade mas ainda sem foto: dá mais alguns segundos para a foto chegar.
             titledSince ||= Date.now();
-            if (Date.now() - titledSince > 8000) { preview = 'sem imagem (a loja não enviou foto)'; break; }
+            if (Date.now() - titledSince > 15000) { preview = 'sem imagem (a loja não enviou foto)'; break; }
           }
           await sleep(300);
         }
@@ -248,7 +257,10 @@ async function sendInWhatsApp(group, message, useOpenChat, dryRun = false) {
       if (preview === 'sem link') {
         // Sem prévia de verdade: não envia. A publicação volta para a fila e é tentada de novo mais tarde.
         clearField(composer);
-        return {ok: false, code: 'no_preview', error: 'O WhatsApp não montou a prévia do link (foto e título) depois de 3 tentativas. Nada foi enviado.'};
+        const why = hiddenSeen
+          ? ' A tela do WhatsApp ficou oculta durante a espera (Chrome minimizado, computador bloqueado ou tela desligada), e assim o WhatsApp não monta a prévia. Deixe o computador desbloqueado com a tela ligada.'
+          : ` O cartão ficou: "${cardText() || previewBox()?.innerText?.trim().slice(0, 60) || 'vazio'}".`;
+        return {ok: false, code: 'no_preview', error: 'O WhatsApp não montou a prévia do link (foto e título) depois de 3 tentativas. Nada foi enviado.' + why};
       }
     }
     const probe = probeOf(message);

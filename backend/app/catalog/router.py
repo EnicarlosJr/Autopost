@@ -147,6 +147,7 @@ class NicheWrite(BaseModel):
     tags: list[str] = Field(default_factory=list, max_length=50)
     include_keywords: list[str] = Field(default_factory=list, max_length=50)
     exclude_keywords: list[str] = Field(default_factory=list, max_length=50)
+    gender: str = Field(default="any", pattern="^(any|male|female)$")
 
 
 def _niche(db: Session, user: User, niche_id: int) -> Niche:
@@ -162,6 +163,7 @@ def _niche_read(db: Session, n: Niche) -> dict:
     cats = {c.id: c for c in db.scalars(select(MlCategory).where(MlCategory.id.in_([l.category_id for l in links])))}
     return {"id": n.id, "name": n.name, "description": n.description, "favorite": n.favorite,
             "tags": jload(n.tags), "include_keywords": jload(n.include_keywords), "exclude_keywords": jload(n.exclude_keywords),
+            "gender": n.gender or "any",
             "categories": [{"id": l.category_id, "include_children": l.include_children,
                             "name": cats[l.category_id].name if l.category_id in cats else l.category_id,
                             "path": cats[l.category_id].path_names if l.category_id in cats else "",
@@ -182,6 +184,7 @@ def _apply(db: Session, n: Niche, data: NicheWrite) -> None:
     n.tags = json.dumps(clean_list(data.tags), ensure_ascii=False)
     n.include_keywords = json.dumps(clean_list(data.include_keywords), ensure_ascii=False)
     n.exclude_keywords = json.dumps(clean_list(data.exclude_keywords), ensure_ascii=False)
+    n.gender = data.gender
     n.updated_at = datetime.now().astimezone()
     db.flush()
     db.query(NicheCategory).filter(NicheCategory.niche_id == n.id).delete()
@@ -245,7 +248,7 @@ def duplicate_niche(niche_id: int, db: Session = Depends(get_db), user: User = D
     while name in names:
         name, n = f"{src.name} (cópia {n})"[:120], n + 1
     copy = Niche(owner_id=user.id, name=name, description=src.description, favorite=False, tags=src.tags,
-                 include_keywords=src.include_keywords, exclude_keywords=src.exclude_keywords)
+                 include_keywords=src.include_keywords, exclude_keywords=src.exclude_keywords, gender=src.gender)
     db.add(copy); db.flush()
     for link in db.scalars(select(NicheCategory).where(NicheCategory.niche_id == src.id)):
         db.add(NicheCategory(niche_id=copy.id, category_id=link.category_id, include_children=link.include_children))

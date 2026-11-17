@@ -50,6 +50,9 @@ class Listing(Base):
     rating: Mapped[float | None] = mapped_column(Float, nullable=True)
     sold: Mapped[int | None] = mapped_column(Integer, nullable=True)
     free_shipping: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Sinais de confiabilidade lidos na página de resultados.
+    official_store: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    fulfillment: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")    # Full (estoque no Mercado Livre)
     # Categoria oficial identificada pelo preditor do Mercado Livre (o card da busca não traz a categoria).
     ml_category_id: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
     category_source: Mapped[str] = mapped_column(String(20), default="")

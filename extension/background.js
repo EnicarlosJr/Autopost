@@ -1,7 +1,7 @@
 // Service worker da extensão: recebe pedidos do painel e do botão, e roda a fila automática.
 import {captureProduct, capture, __test_generateAffiliateLink} from './capture.js';
 import {getConfig, setConfig, MIN_INTERVAL_SECONDS} from './config.js';
-import {processQueueOnce, sendPublication} from './publisher.js';
+import {prepareUpcoming, processQueueOnce, sendPublication} from './publisher.js';
 import {isSearching, runDueCampaignSearch, runDueSearch} from './searcher.js';
 import {syncCategories} from './catalog.js';
 import {isSending, nextSendIn, whatsappTab, __test_sendInWhatsApp} from './whatsapp.js';
@@ -18,9 +18,13 @@ chrome.runtime.onInstalled.addListener(ensureAlarm);
 chrome.runtime.onStartup.addListener(ensureAlarm);
 chrome.alarms.onAlarm.addListener(async alarm => {
   if (alarm.name !== ALARM) return;
-  await processQueueOnce();
+  const sent = await processQueueOnce();
+  if (isSending() || sent?.sent) return;
+  // Sem envio agora: prepara o link de afiliado da próxima publicação e, se não havia nada, roda as buscas.
+  const prepared = await prepareUpcoming();
+  if (prepared?.prepared || prepared?.skipped === 'busy') return;
   // Buscas só rodam quando não há envio em andamento. As da campanha têm prioridade.
-  if (!isSending()) {
+  if (!isSending() && !isSearching()) {
     const campaign = await runDueCampaignSearch();
     if (campaign?.skipped === 'none') runDueSearch();
   }

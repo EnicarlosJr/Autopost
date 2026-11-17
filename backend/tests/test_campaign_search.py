@@ -114,3 +114,51 @@ def test_other_profile_cannot_touch_campaign(env):
     other_camp = other.post("/api/campaigns", json={"name": "Minha", "groups": [{"group": "G"}]}).json()
     assert other.post(f"/api/campaigns/{other_camp['id']}/searches", json={"niche_id": niche["id"], "keywords": ["x"]}).status_code == 404
     assert other.get(f"/api/campaigns/{other_camp['id']}/niche-defaults", params={"niche_ids": str(niche["id"])}).json()["niche_ids"] == []
+
+def test_gender_filter_adds_term_and_rejects_other_audience(env):
+    """Público masculino: "masculino" entra na busca e anúncios femininos ficam de fora (unissex passa)."""
+    client, Session = env
+    _setup(client)
+    camp = client.post("/api/campaigns", json={"name": "Gênero", "groups": [{"group": "G"}]}).json()
+    niche = client.post("/api/niches", json={"name": "Homens", "gender": "male", "include_keywords": ["tênis"]}).json()
+    assert niche["gender"] == "male"
+    defaults = client.get(f"/api/campaigns/{camp['id']}/niche-defaults", params={"niche_ids": str(niche["id"])}).json()
+    assert defaults["gender"] == "male"
+    s = client.post(f"/api/campaigns/{camp['id']}/searches", json={"keywords": ["tênis", "Perfume Masculino", "relógio feminino"],
+                                                                   "filters": {"gender": "male"}}).json()
+    assert s["terms"] == ["tênis masculino", "Perfume Masculino", "relógio feminino"]   # quem já cita o público fica como está
+    assert client.get("/api/campaign-searches/due").json()["id"] == s["id"]
+    items = [_item(11, None, title="Tênis Masculino Corrida"), _item(12, None, title="Tênis Feminino Casual"),
+             _item(13, None, title="Tênis Unissex Branco"), _item(14, None, title="Tênis Esportivo Preto"),
+             _item(15, None, title="Sandália Mulher Verão")]
+    client.post(f"/api/campaign-searches/{s['id']}/results", json={"items": items})
+    reasons = {r["external_id"]: r["reason"] for r in client.get(f"/api/campaigns/{camp['id']}/searches/{s['id']}/results",
+                                                                params={"matched": "all"}).json()}
+    assert reasons == {"MLB11": "", "MLB12": "para o público feminino", "MLB13": "", "MLB14": "", "MLB15": "para o público feminino"}
+    # Modo estrito: só passa quem diz o público ou unissex.
+    strict = client.post(f"/api/campaigns/{camp['id']}/searches", json={"keywords": ["tênis"], "filters": {"gender": "male", "gender_strict": True}}).json()
+    client.get("/api/campaign-searches/due")
+    client.post(f"/api/campaign-searches/{strict['id']}/results", json={"items": items})
+    got = {r["external_id"]: r["reason"] for r in client.get(f"/api/campaigns/{camp['id']}/searches/{strict['id']}/results",
+                                                            params={"matched": "all"}).json()}
+    assert got["MLB14"] == "não diz que é masculino ou unissex" and got["MLB11"] == "" and got["MLB13"] == ""
+
+def test_trust_filters_reject_low_quality_listings(env):
+    """Confiabilidade: termos de baixa qualidade, poucas vendas e exigência de loja oficial ou Full."""
+    client, _ = env
+    _setup(client)
+    camp = client.post("/api/campaigns", json={"name": "Confiável", "groups": [{"group": "G"}]}).json()
+    s = client.post(f"/api/campaigns/{camp['id']}/searches", json={"keywords": ["pulseira"], "filters": {
+        "trust": "high", "min_sold": 500, "official_or_full": True, "exclude_suspicious": True}}).json()
+    client.get("/api/campaign-searches/due")
+    items = [_item(21, None, title="Pulseira Grumet Banhada A Ouro 18k", sold=5000, fulfillment=True),
+             _item(22, None, title="Pulseira Prata 925 Legítima", sold=100, official_store=True),
+             _item(23, None, title="Pulseira Couro Masculina", sold=2000),
+             _item(24, None, title="Relógio Casio Original", sold=3000, official_store=True),
+             _item(25, None, title="Tênis 1ª Linha Premium", sold=9000, fulfillment=True)]
+    client.post(f"/api/campaign-searches/{s['id']}/results", json={"items": items})
+    rows = client.get(f"/api/campaigns/{camp['id']}/searches/{s['id']}/results", params={"matched": "all"}).json()
+    reasons = {r["external_id"]: r["reason"] for r in rows}
+    assert reasons == {"MLB21": 'baixa confiabilidade ("banhada")', "MLB22": "menos de 500 vendidos",
+                       "MLB23": "não é loja oficial nem Full", "MLB24": "", "MLB25": 'baixa confiabilidade ("1a linha")'}
+    assert next(r for r in rows if r["external_id"] == "MLB24")["official_store"] is True

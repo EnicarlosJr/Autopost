@@ -7,6 +7,7 @@ O Mercado Livre não libera a busca da API e o site ignora a categoria pedida na
    excluídas e pelos filtros de preço, desconto, nota e frete.
 """
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -35,15 +36,51 @@ def jl(text: str | None, default):
         return default
 
 
+# Palavras que indicam o público no título ou na categoria (comparadas sem acento e sem maiúsculas).
+GENDER_WORDS = {
+    "male": {"masculino", "masculina", "masculinos", "masculinas", "masc", "homem", "homens", "men", "mens",
+             "menino", "meninos", "rapaz", "garoto", "garotos", "cavalheiro"},
+    "female": {"feminino", "feminina", "femininos", "femininas", "fem", "mulher", "mulheres", "women", "womens", "woman",
+               "menina", "meninas", "garota", "garotas", "dama", "damas", "ladies", "lady", "gestante"},
+    "unisex": {"unissex", "unisex"},
+}
+GENDER_TERM = {"male": "masculino", "female": "feminino"}
+GENDER_LABEL = {"male": "masculino", "female": "feminino"}
+
+# Termos comuns em anúncios de baixa confiabilidade (imitação, folheado, "primeira linha"...).
+SUSPICIOUS_TERMS = ["banhado", "banhada", "folheado", "folheada", "replica", "réplica", "imitacao", "imitação",
+                    "primeira linha", "1a linha", "1ª linha", "similar", "inspirado", "inspirada", "inspired",
+                    "tipo original", "aaa", "importado china", "bijuteria", "bijuterias", "generico", "genérico"]
+
+
+def suspicious_term(title: str) -> str:
+    words = " " + re.sub(r"[^\w]+", " ", plain(title)) + " "
+    for term in SUSPICIOUS_TERMS:
+        if f" {plain(term)} " in words:
+            return term
+    return ""
+
+
+def genders_in(text: str) -> set[str]:
+    """Públicos citados no texto: {"male"}, {"female"}, {"unisex"} ou combinações."""
+    words = set(plain(text).replace("'", " ").replace("-", " ").replace("/", " ").split())
+    return {g for g, vocab in GENDER_WORDS.items() if words & vocab}
+
+
 def terms_of(search: CampaignSearch) -> list[str]:
-    """Palavras-chave da busca; sem palavras, usa o nome de cada categoria escolhida."""
+    """Palavras-chave da busca; sem palavras, usa o nome de cada categoria escolhida.
+    Com público definido, acrescenta "masculino" ou "feminino" a quem ainda não cita o público."""
     words = [w for w in jl(search.keywords, []) if isinstance(w, str) and w.strip()]
     if not words:
         words = [c.get("name") or c.get("id") for c in jl(search.categories, []) if isinstance(c, dict)]
+    gender = jl(search.filters, {}).get("gender")
     seen, out = set(), []
     for w in words:
+        w = w.strip()
+        if gender in GENDER_TERM and not genders_in(w):
+            w = f"{w} {GENDER_TERM[gender]}"
         if plain(w) not in seen:
-            seen.add(plain(w)); out.append(w.strip())
+            seen.add(plain(w)); out.append(w)
     return out[:MAX_TERMS]
 
 
@@ -80,6 +117,23 @@ def reject_reason(db: Session, search: CampaignSearch, listing: Listing, allowed
         return f"nota menor que {filters['min_rating']}"
     if filters.get("free_shipping") and not listing.free_shipping:
         return "sem frete grátis"
+    if filters.get("exclude_suspicious"):
+        term = suspicious_term(listing.title)
+        if term:
+            return f'baixa confiabilidade ("{term}")'
+    if filters.get("min_sold") and (listing.sold or 0) < int(filters["min_sold"]):
+        return f"menos de {filters['min_sold']} vendidos"
+    if filters.get("official_or_full") and not (listing.official_store or listing.fulfillment):
+        return "não é loja oficial nem Full"
+    gender = filters.get("gender")
+    if gender in GENDER_TERM:
+        cat = db.get(MlCategory, listing.ml_category_id) if listing.ml_category_id else None
+        found = genders_in(f"{listing.title} {cat.path_names if cat else ''}")
+        other = "female" if gender == "male" else "male"
+        if other in found and gender not in found and "unisex" not in found:
+            return f"para o público {GENDER_LABEL[other]}"
+        if filters.get("gender_strict") and not found & {gender, "unisex"}:
+            return f"não diz que é {GENDER_LABEL[gender]} ou unissex"
     return ""
 
 

@@ -212,7 +212,8 @@ export default function CampaignEditor() {
 
   const searchStep = campaignId ? <CampaignSearchPanel campaignId={campaignId} onAdded={() => loadProducts(campaignId)}
     defaults={{niche_id: config.niche_ids[0] ?? null, niche_name: niches.find(n => n.id === config.niche_ids[0])?.name ?? '',
-      categories: config.ml_categories, keywords: config.include_keywords, exclude_keywords: config.exclude_keywords}}/>
+      categories: config.ml_categories, keywords: config.include_keywords, exclude_keywords: config.exclude_keywords,
+      gender: niches.find(n => config.niche_ids.includes(n.id) && n.gender && n.gender !== 'any')?.gender ?? 'any'}}/>
     : <Typography color="text.secondary">Salvando o rascunho…</Typography>;
 
   const selectionStep = <Stack gap={2}>

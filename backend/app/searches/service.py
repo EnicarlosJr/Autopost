@@ -155,6 +155,8 @@ def upsert_listing(db: Session, item: dict, *, search_id: int | None = None,
     listing.rating = item.get("rating")
     listing.sold = item.get("sold")
     listing.free_shipping = bool(item.get("free_shipping"))
+    listing.official_store = bool(item.get("official_store"))
+    listing.fulfillment = bool(item.get("fulfillment"))
     listing.last_seen_at = now()
     db.flush()
     listing.min_price_30d, points = _record_price(db, listing)

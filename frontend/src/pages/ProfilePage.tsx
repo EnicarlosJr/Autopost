@@ -1,7 +1,7 @@
 import {useCallback, useEffect, useState} from 'react';
 import {useSearchParams} from 'react-router-dom';
 import {Alert, Box, Button, Card, Chip, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, LinearProgress, Stack, Tab, Tabs,
-  TextField, Tooltip, Typography, useMediaQuery} from '@mui/material';
+  TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography, useMediaQuery} from '@mui/material';
 import {api, apiError} from '../services/api';
 import {syncCategoriesInBrowser} from '../services/sender';
 import type {CatalogStatus, CategoryPick, MlCategory, Niche} from '../types/catalog';
@@ -13,8 +13,10 @@ import {AddIcon, CopyIcon, DeleteIcon, EditIcon, RefreshIcon, TagIcon} from '../
 import {display, tokens} from '../theme';
 
 const SUGGESTIONS = ['Informática', 'Eletrônicos', 'Casa e Decoração', 'Ferramentas', 'Games', 'Academia e Fitness', 'Beleza', 'Acessórios', 'Eletrodomésticos'];
-type Draft = {id?: number; name: string; description: string; favorite: boolean; categories: CategoryPick[]; tags: string[]; include_keywords: string[]; exclude_keywords: string[]};
-const EMPTY: Draft = {name: '', description: '', favorite: false, categories: [], tags: [], include_keywords: [], exclude_keywords: []};
+type Gender = 'any' | 'male' | 'female';
+const GENDERS: [Gender, string][] = [['any', 'Todos'], ['male', 'Masculino'], ['female', 'Feminino']];
+type Draft = {id?: number; name: string; description: string; favorite: boolean; categories: CategoryPick[]; tags: string[]; include_keywords: string[]; exclude_keywords: string[]; gender: Gender};
+const EMPTY: Draft = {name: '', description: '', favorite: false, categories: [], tags: [], include_keywords: [], exclude_keywords: [], gender: 'any'};
 const date = (iso: string) => new Date(iso).toLocaleDateString('pt-BR', {day: '2-digit', month: '2-digit', year: 'numeric'});
 
 function NicheDialog({draft, onClose, onSaved}: {draft: Draft | null; onClose: () => void; onSaved: (text: string) => void}) {
@@ -42,6 +44,14 @@ function NicheDialog({draft, onClose, onSaved}: {draft: Draft | null; onClose: (
           {!value.id && !value.name && <Stack direction="row" gap={.5} flexWrap="wrap">{SUGGESTIONS.map(s =>
             <Chip key={s} size="small" variant="outlined" label={s} onClick={() => set({name: s})}/>)}</Stack>}
           <TextField label="Descrição (opcional)" value={value.description} onChange={e => set({description: e.target.value})} multiline minRows={2}/>
+          <Box>
+            <Typography fontWeight={600} mb={.5}>Público</Typography>
+            <ToggleButtonGroup exclusive size="small" value={value.gender} aria-label="Público do nicho" onChange={(_, v: Gender | null) => v && set({gender: v})}
+              sx={{'& .MuiToggleButton-root': {textTransform: 'none', px: 2}}}>
+              {GENDERS.map(([g, label]) => <ToggleButton key={g} value={g}>{label}</ToggleButton>)}
+            </ToggleButtonGroup>
+            <Typography variant="caption" display="block" mt={.5}>Nas buscas das campanhas, o público entra na palavra buscada e o outro público fica de fora.</Typography>
+          </Box>
           <Box>
             <Typography fontWeight={600} mb={.5}>Criado por você</Typography>
             <Typography variant="body2" color="text.secondary" mb={1.5}>Tags e palavras-chave são suas. Elas não substituem as categorias oficiais.</Typography>
@@ -80,8 +90,9 @@ function NicheCard({n, onEdit, onAction}: {n: Niche; onEdit: () => void; onActio
     <Stack direction="row" gap={.5} flexWrap="wrap">
       {n.categories.length ? n.categories.map(c => <OfficialChip key={c.id} cat={c}/>) : <Typography variant="caption">Sem categorias oficiais</Typography>}
     </Stack>
-    {(n.tags.length > 0 || n.include_keywords.length > 0 || n.exclude_keywords.length > 0) && <Stack gap={.5} fontSize={13.5}>
+    {(n.tags.length > 0 || n.include_keywords.length > 0 || n.exclude_keywords.length > 0 || (n.gender && n.gender !== 'any')) && <Stack gap={.5} fontSize={13.5}>
       {n.tags.length > 0 && <Stack direction="row" gap={.5} flexWrap="wrap">{n.tags.map(t => <Chip key={t} size="small" icon={<TagIcon sx={{fontSize: 14}}/>} label={t}/>)}</Stack>}
+      {n.gender && n.gender !== 'any' && <span>Público {n.gender === 'male' ? 'masculino' : 'feminino'}</span>}
       {n.include_keywords.length > 0 && <span>Palavras: {n.include_keywords.join(', ')}</span>}
       {n.exclude_keywords.length > 0 && <Box component="span" color="text.secondary">Sem: {n.exclude_keywords.join(', ')}</Box>}
     </Stack>}
@@ -136,7 +147,7 @@ export default function ProfilePage() {
     } catch (e) { setError(apiError(e, 'Ação não concluída.')); }
   };
   const edit = (n: Niche) => setDraft({id: n.id, name: n.name, description: n.description, favorite: n.favorite, categories: n.categories,
-    tags: n.tags, include_keywords: n.include_keywords, exclude_keywords: n.exclude_keywords});
+    tags: n.tags, include_keywords: n.include_keywords, exclude_keywords: n.exclude_keywords, gender: n.gender ?? 'any'});
   const catalogEmpty = status !== null && status.total === 0;
 
   return <>

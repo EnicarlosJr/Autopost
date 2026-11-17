@@ -41,6 +41,7 @@ class Niche(Base):
     tags: Mapped[str] = mapped_column(Text, default="[]")                  # tags pessoais (não são categorias)
     include_keywords: Mapped[str] = mapped_column(Text, default="[]")
     exclude_keywords: Mapped[str] = mapped_column(Text, default="[]")
+    gender: Mapped[str] = mapped_column(String(10), default="any", server_default="any")   # any | male | female
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 

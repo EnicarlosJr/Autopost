@@ -123,8 +123,10 @@ function readSearchPage() {
           original_price: typeof previous === 'number' ? previous : null,
           price_note: /no\s*pix/i.test(JSON.stringify(price)) ? 'no Pix' : '',
           rating: ratingText ? Number(ratingText.replace(',', '.')) : null,
-          sold: sold(reviewText),
+          sold: Number.isFinite(meta.signal?.sales) ? meta.signal.sales : sold(reviewText),
           free_shipping: /free_shipping|gr[aá]tis/i.test(shippingText),
+          official_store: Boolean(meta.signal?.official_store),
+          fulfillment: meta.signal?.ship_logistics === 'full' || /\bfull\b/i.test(shippingText),
           ml_category_id: /^MLB\d+$/.test(meta.category_id || '') ? meta.category_id : null,
         });
       }

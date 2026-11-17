@@ -81,11 +81,45 @@ export async function sendPublication({id, useOpenChat = false}) {
   }
 }
 
+// Preparação antecipada: gera o link de afiliado das próximas publicações (até 30 min antes do horário),
+// uma por vez e só quando nada mais está rodando. Assim, na hora do envio, o computador só cuida do
+// WhatsApp e o link já existe há alguns minutos (o WhatsApp monta a prévia de links novos com mais dificuldade).
+const PREPARE_AHEAD_MS = 30 * 60 * 1000;
+let preparing = false;
+const failedPrepare = new Map();   // id -> horário da falha (tenta de novo depois de 10 min)
+export async function prepareUpcoming() {
+  if (preparing || running || isSending()) return {skipped: 'busy'};
+  preparing = true;
+  try {
+    const rows = await api('/publications?status=scheduled,approved&limit=50');
+    const limit = Date.now() + PREPARE_AHEAD_MS;
+    const next = rows
+      .filter(p => needsAffiliateLink(p.product) && (!p.scheduled_at || new Date(p.scheduled_at).getTime() <= limit))
+      .filter(p => Date.now() - (failedPrepare.get(p.id) || 0) > 10 * 60 * 1000)
+      .sort((a, b) => new Date(a.scheduled_at || 0) - new Date(b.scheduled_at || 0))[0];
+    if (!next) return {skipped: 'none'};
+    log('preparando link de afiliado com antecedência', next.id);
+    try {
+      const data = await captureProduct({url: next.product.original_url, affiliate: true});
+      await api(`/products/${next.product.id}/browser-data`, {method: 'POST', body: data});
+      return {prepared: next.id};
+    } catch (error) {
+      failedPrepare.set(next.id, Date.now());   // na hora do envio tenta de novo, como antes
+      log('falha ao preparar', next.id, error.message);
+      return {error: error.message};
+    }
+  } catch (error) {
+    return {error: error.message || String(error)};
+  } finally {
+    preparing = false;
+  }
+}
+
 // Fila automática: envia no máximo uma publicação por chamada, respeitando o intervalo.
 let running = false;
 export async function processQueueOnce() {
   const config = await getConfig();
-  if (!config.autoSend || running || isSending()) return {skipped: 'idle'};
+  if (!config.autoSend || running || isSending() || preparing) return {skipped: 'idle'};
   running = true;
   try {
     if (await nextSendIn(config.sendIntervalSeconds) > 0) return {skipped: 'interval'};

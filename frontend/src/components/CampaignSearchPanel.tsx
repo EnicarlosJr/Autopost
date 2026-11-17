@@ -1,9 +1,10 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {Alert, Box, Button, Card, Checkbox, Chip, CircularProgress, Collapse, FormControlLabel, InputAdornment, LinearProgress, Stack, Switch,
-  TextField, Tooltip, Typography} from '@mui/material';
+  TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography} from '@mui/material';
 import {api, apiError} from '../services/api';
 import {runSearches} from '../services/sender';
-import type {CampaignSearch, OfficialCategory, SearchFilters, SearchResult} from '../types/campaign';
+import {GENDER_LABEL} from '../types/campaign';
+import type {CampaignSearch, Gender, OfficialCategory, SearchFilters, SearchResult} from '../types/campaign';
 import CategoryTree, {OfficialChip} from './CategoryTree';
 import {MultiPick, SelectAll} from './Bulk';
 import {PriceTag} from './Ui';
@@ -13,15 +14,25 @@ import {tokens} from '../theme';
 const STATUS: Record<CampaignSearch['status'], [string, 'default' | 'info' | 'success' | 'warning' | 'error']> = {
   queued: ['Na fila', 'default'], running: ['Buscando…', 'info'], done: ['Concluída', 'success'], no_results: ['Sem resultados', 'warning'], failed: ['Falhou', 'error'],
 };
-const EMPTY_FILTERS: SearchFilters = {min_price: null, max_price: null, min_discount: 0, min_rating: null, free_shipping: false, allow_uncategorized: false};
+// Níveis de confiabilidade: cada um preenche os filtros abaixo (vendas, nota, loja oficial/Full e termos suspeitos).
+type Trust = SearchFilters['trust'];
+const TRUST: Record<Exclude<Trust, 'custom'>, [string, string, Partial<SearchFilters>]> = {
+  off: ['Sem filtro', 'Todos os anúncios encontrados.', {min_sold: 0, min_rating: null, official_or_full: false, exclude_suspicious: false}],
+  basic: ['Básica', 'Pelo menos 50 vendidos, nota 4 ou mais e sem termos como "banhado", "réplica" ou "1ª linha".',
+    {min_sold: 50, min_rating: 4, official_or_full: false, exclude_suspicious: true}],
+  high: ['Alta', 'Pelo menos 500 vendidos, nota 4,5 ou mais, só loja oficial ou Full e sem termos suspeitos.',
+    {min_sold: 500, min_rating: 4.5, official_or_full: true, exclude_suspicious: true}],
+};
+const EMPTY_FILTERS: SearchFilters = {min_price: null, max_price: null, min_discount: 0, min_rating: 4, free_shipping: false, allow_uncategorized: false,
+  gender: 'any', gender_strict: false, trust: 'basic', min_sold: 50, official_or_full: false, exclude_suspicious: true};
 const num = (v: string) => v.trim() === '' ? null : Number(v.replace(',', '.'));
 const when = (iso: string) => new Date(iso).toLocaleString('pt-BR', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
 
 type Form = {niche_id: number | null; niche_name: string; categories: OfficialCategory[]; keywords: string[]; exclude_keywords: string[]; filters: SearchFilters};
 
 /** "Buscar produtos para esta campanha": formulário, histórico e resultados com seleção. */
-export default function CampaignSearchPanel({campaignId, defaults, onAdded}: {campaignId: number; defaults: Omit<Form, 'filters'>; onAdded: () => void}) {
-  const [form, setForm] = useState<Form>({...defaults, filters: EMPTY_FILTERS});
+export default function CampaignSearchPanel({campaignId, defaults, onAdded}: {campaignId: number; defaults: Omit<Form, 'filters'> & {gender?: Gender}; onAdded: () => void}) {
+  const [form, setForm] = useState<Form>(() => { const {gender, ...rest} = defaults; return {...rest, filters: {...EMPTY_FILTERS, gender: gender ?? 'any'}}; });
   const [history, setHistory] = useState<CampaignSearch[]>([]), [current, setCurrent] = useState<number | null>(null);
   const [results, setResults] = useState<SearchResult[]>([]), [showRejected, setShowRejected] = useState(false), [picked, setPicked] = useState<number[]>([]);
   const [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false), [advanced, setAdvanced] = useState(false), [tree, setTree] = useState(false);
@@ -29,7 +40,11 @@ export default function CampaignSearchPanel({campaignId, defaults, onAdded}: {ca
   const lastDefaults = useRef('');
   useEffect(() => {   // nichos/categorias mudaram na etapa anterior: atualiza o formulário
     const key = JSON.stringify(defaults);
-    if (key !== lastDefaults.current) { lastDefaults.current = key; setForm(f => ({...f, ...defaults})); }
+    if (key !== lastDefaults.current) {
+      lastDefaults.current = key;
+      const {gender, ...rest} = defaults;
+      setForm(f => ({...f, ...rest, filters: {...f.filters, gender: gender ?? f.filters.gender}}));
+    }
   }, [defaults]);
 
   const loadHistory = useCallback(async () => {
@@ -94,6 +109,32 @@ export default function CampaignSearchPanel({campaignId, defaults, onAdded}: {ca
         <MultiPick label="Palavras-chave (uma busca no Mercado Livre para cada)" value={form.keywords} onChange={v => set({keywords: v.slice(0, 10)})} options={[]}
           helper="Até 10. Sem palavras, o nome de cada categoria vira a palavra de busca."/>
         <Box>
+          <Typography fontSize={14} fontWeight={600} mb={.75}>Confiabilidade</Typography>
+          <ToggleButtonGroup exclusive size="small" value={form.filters.trust === 'custom' ? null : form.filters.trust} aria-label="Confiabilidade"
+            onChange={(_, v: Exclude<Trust, 'custom'> | null) => v && set({filters: {...form.filters, ...TRUST[v][2], trust: v}})}
+            sx={{'& .MuiToggleButton-root': {textTransform: 'none', px: 2}}}>
+            {(Object.keys(TRUST) as Exclude<Trust, 'custom'>[]).map(k => <ToggleButton key={k} value={k}>{TRUST[k][0]}</ToggleButton>)}
+          </ToggleButtonGroup>
+          <Typography variant="body2" color="text.secondary" mt={.75}>
+            {form.filters.trust === 'custom' ? 'Personalizada: ajustada nos filtros abaixo.' : TRUST[form.filters.trust][1]}
+          </Typography>
+        </Box>
+        <Box>
+          <Typography fontSize={14} fontWeight={600} mb={.75}>Público</Typography>
+          <ToggleButtonGroup exclusive size="small" value={form.filters.gender} aria-label="Público"
+            onChange={(_, v: Gender | null) => v && set({filters: {...form.filters, gender: v}})} sx={{'& .MuiToggleButton-root': {textTransform: 'none', px: 2}}}>
+            {(Object.keys(GENDER_LABEL) as Gender[]).map(g => <ToggleButton key={g} value={g}>{GENDER_LABEL[g]}</ToggleButton>)}
+          </ToggleButtonGroup>
+          {form.filters.gender !== 'any' && <Box mt={.75}>
+            <Typography variant="body2" color="text.secondary">
+              Cada palavra é buscada com "{form.filters.gender === 'male' ? 'masculino' : 'feminino'}" e anúncios do outro público ficam de fora. Unissex continua valendo.
+            </Typography>
+            <FormControlLabel control={<Switch size="small" checked={form.filters.gender_strict}
+              onChange={e => set({filters: {...form.filters, gender_strict: e.target.checked}})}/>}
+              label={`Só anúncios que dizem "${form.filters.gender === 'male' ? 'masculino' : 'feminino'}" ou "unissex" no título`}/>
+          </Box>}
+        </Box>
+        <Box>
           <Stack direction="row" alignItems="center" justifyContent="space-between" mb={.75}>
             <Typography fontSize={14} fontWeight={600}>Categorias oficiais aceitas</Typography>
             <Button size="small" onClick={() => setTree(t => !t)} aria-expanded={tree}>{tree ? 'Fechar árvore' : 'Escolher na árvore'}</Button>
@@ -106,7 +147,7 @@ export default function CampaignSearchPanel({campaignId, defaults, onAdded}: {ca
         </Box>
         <MultiPick label="Palavras excluídas do título" value={form.exclude_keywords} onChange={v => set({exclude_keywords: v})} options={[]}/>
         <Box>
-          <Button size="small" onClick={() => setAdvanced(a => !a)} aria-expanded={advanced}>{advanced ? 'Ocultar filtros' : 'Filtros de preço, desconto e nota'}</Button>
+          <Button size="small" onClick={() => setAdvanced(a => !a)} aria-expanded={advanced}>{advanced ? 'Ocultar filtros' : 'Filtros de preço, desconto, nota e vendas'}</Button>
           <Collapse in={advanced}><Stack direction={{xs: 'column', sm: 'row'}} gap={1.5} mt={1.5} flexWrap="wrap" useFlexGap>
             <TextField size="small" label="Preço mínimo" value={form.filters.min_price ?? ''} onChange={e => set({filters: {...form.filters, min_price: num(e.target.value)}})}
               InputProps={{startAdornment: <InputAdornment position="start">R$</InputAdornment>}} sx={{width: 150}}/>
@@ -114,7 +155,13 @@ export default function CampaignSearchPanel({campaignId, defaults, onAdded}: {ca
               InputProps={{startAdornment: <InputAdornment position="start">R$</InputAdornment>}} sx={{width: 150}}/>
             <TextField size="small" type="number" label="Desconto mínimo (%)" value={form.filters.min_discount} sx={{width: 170}}
               onChange={e => set({filters: {...form.filters, min_discount: Math.max(0, Math.min(95, Number(e.target.value) || 0))}})}/>
-            <TextField size="small" label="Nota mínima" value={form.filters.min_rating ?? ''} sx={{width: 120}} onChange={e => set({filters: {...form.filters, min_rating: num(e.target.value)}})}/>
+            <TextField size="small" label="Nota mínima" value={form.filters.min_rating ?? ''} sx={{width: 120}} onChange={e => set({filters: {...form.filters, min_rating: num(e.target.value), trust: 'custom'}})}/>
+            <TextField size="small" type="number" label="Vendidos mínimos" value={form.filters.min_sold} sx={{width: 150}}
+              onChange={e => set({filters: {...form.filters, min_sold: Math.max(0, Number(e.target.value) || 0), trust: 'custom'}})}/>
+            <FormControlLabel control={<Switch checked={form.filters.official_or_full} onChange={e => set({filters: {...form.filters, official_or_full: e.target.checked, trust: 'custom'}})}/>}
+              label="Só loja oficial ou Full"/>
+            <FormControlLabel control={<Switch checked={form.filters.exclude_suspicious} onChange={e => set({filters: {...form.filters, exclude_suspicious: e.target.checked, trust: 'custom'}})}/>}
+              label='Excluir "banhado", "réplica", "1ª linha" e afins'/>
             <FormControlLabel control={<Switch checked={form.filters.free_shipping} onChange={e => set({filters: {...form.filters, free_shipping: e.target.checked}})}/>} label="Só frete grátis"/>
             <FormControlLabel control={<Switch checked={form.filters.allow_uncategorized} onChange={e => set({filters: {...form.filters, allow_uncategorized: e.target.checked}})}/>}
               label="Aceitar anúncios sem categoria identificada"/>
@@ -137,7 +184,7 @@ export default function CampaignSearchPanel({campaignId, defaults, onAdded}: {ca
             bgcolor: s.id === current ? tokens.paper : 'transparent'}}>
             <Box flex={1} minWidth={0}>
               <Typography fontSize={14} fontWeight={600} noWrap>{s.terms.join(', ')}</Typography>
-              <Typography variant="caption">{when(s.created_at)}{s.niche_name ? `, nicho ${s.niche_name}` : ''}{s.categories.length ? `, ${s.categories.length} categoria(s)` : ''}
+              <Typography variant="caption">{when(s.created_at)}{s.niche_name ? `, nicho ${s.niche_name}` : ''}{s.categories.length ? `, ${s.categories.length} categoria(s)` : ''}{s.filters?.gender && s.filters.gender !== 'any' ? `, público ${GENDER_LABEL[s.filters.gender].toLowerCase()}` : ''}
                 {['done', 'no_results'].includes(s.status) ? `, ${s.result_count} encontrados, ${s.matched_count} nos filtros, ${s.added_count} adicionados` : ''}</Typography>
               {s.error && <Typography variant="caption" color="error.main" display="block">{s.error}</Typography>}
             </Box>
@@ -176,9 +223,11 @@ export default function CampaignSearchPanel({campaignId, defaults, onAdded}: {ca
               <Stack direction="row" gap={.5} flexWrap="wrap" alignItems="center">
                 {r.ml_category_id ? <OfficialChip cat={{id: r.ml_category_id, include_children: false, name: r.category_name || r.ml_category_id, path: r.category_path, is_leaf: true}}/>
                   : <Chip size="small" variant="outlined" label="Categoria não identificada"/>}
+                {r.official_store && <Chip size="small" color="primary" variant="outlined" label="Loja oficial"/>}
+                {r.fulfillment && <Chip size="small" color="success" variant="outlined" label="Full"/>}
                 {r.in_campaign && <Chip size="small" color="success" label="Já na campanha"/>}
                 {!r.matched && <Chip size="small" color="warning" label={r.reason}/>}
-                <Typography variant="caption">Nota {r.score}{r.rating ? `, ★ ${r.rating}` : ''}, busca "{r.term}"</Typography>
+                <Typography variant="caption">Nota {r.score}{r.rating ? `, ★ ${r.rating}` : ''}{r.sold != null ? `, ${r.sold.toLocaleString('pt-BR')} vendidos` : ''}, busca "{r.term}"</Typography>
               </Stack>
             </Box>
           </Stack>)}</Card>

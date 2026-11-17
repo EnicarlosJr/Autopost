@@ -88,6 +88,9 @@ class ResultItem(BaseModel):
     rating: float | None = Field(default=None, ge=0, le=5)
     sold: int | None = Field(default=None, ge=0)
     free_shipping: bool = False
+    official_store: bool = False
+    fulfillment: bool = False
+    ml_category_id: str | None = Field(default=None, max_length=20)
 
 class Results(BaseModel):
     items: list[ResultItem] = Field(default_factory=list, max_length=500)

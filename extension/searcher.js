@@ -2,6 +2,7 @@
 // resultados do Mercado Livre numa aba em segundo plano, lê os anúncios e devolve.
 import {api} from './api.js';
 import {log, sleep} from './config.js';
+import {isSending} from './whatsapp.js';
 
 let running = false;
 export function isSearching() { return running; }
@@ -70,6 +71,8 @@ async function readTerms(terms) {
   let error = '';
   for (const [index, {term, url}] of terms.entries()) {
     if (index) await sleep(4000 + Math.random() * 5000);   // ritmo de pessoa, não de robô
+    // Não abre página do Mercado Livre enquanto uma mensagem está sendo enviada (máquinas lentas travam a prévia).
+    for (let waited = 0; isSending() && waited < 180000; waited += 2000) await sleep(2000);
     try {
       const result = await readResults(url);
       if (result.blocked) { error = 'O Mercado Livre pediu verificação. Abra o site neste Chrome e entre na sua conta.'; break; }

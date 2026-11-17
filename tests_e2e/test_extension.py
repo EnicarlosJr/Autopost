@@ -127,3 +127,36 @@ def test_whatsapp_waits_for_real_link_preview(browser, link, expect):
         assert not result["ok"] and result["code"] == "no_preview" and sent == []
     else:
         assert result["ok"] and result["preview"] == expect and len(sent) == 1
+
+
+def _payload_page():
+    """Página no formato atual do Mercado Livre: sem cartões no HTML, só os dados embutidos (com @refs e u)."""
+    def card(item_id, title, price, previous=None, ads=False, category="MLB999193"):
+        prices = [{"values": [{"type": "price", "key": "previous_price", "price": {"value": previous, "previous": True}}]}] if previous else []
+        return {"polycard": {"unique_id": "x", "metadata": {"id": item_id, "url": "www.mercadolivre.com.br/x/p/MLB1", "category_id": category,
+                                                            "signal": {"ads": ads}},
+                             "pictures": {"pictures": [{"id": "655892-MLB1_092026"}]},
+                             "components": [{"type": "title", "title": {"text": title}},
+                                            {"type": "seller", "seller": {"values": [{"label": {"text": "CROMMO"}}]}},
+                                            {"type": "review_compacted", "review_compacted": {"values": [{"label": {"text": "4.9"}}, {"label": {"text": "| +500 vendidos"}}]}},
+                                            {"type": "price", "price": {"price_labels": prices, "current_price": {"value": price}, "pix": "no Pix" if previous else ""}},
+                                            {"type": "shipping_v2", "shipping_v2": [{"values": [{"key": "free_shipping_single"}]}]}]}}
+    data = {"optimizedResponse": {"results": [card("MLB7579993462", "Kettlebell 12kg", 158.98, 199.9), card("MLB5", "Patrocinado", 10, ads=True),
+                                              card("MLB7912900396", "Kettlebell 16kg", 167.22)]}}
+    text = "0:" + json.dumps(data, ensure_ascii=False).replace('"pix": ""', '"ref": @12, "empty": u') + "\n"
+    return f'<html><body><div id="root"></div><script>_n.ctx.s["nr"].q({json.dumps(text)});</script></body></html>'
+
+
+def test_search_reader_reads_embedded_payload_when_cards_are_not_rendered(browser):
+    ctx, worker = browser
+    ctx.route("https://lista.mercadolivre.com.br/kettlebell", lambda r: r.fulfill(status=200, content_type=HTML, body=_payload_page()))
+    page = ctx.new_page(); page.goto("https://lista.mercadolivre.com.br/kettlebell")
+    tab = _tab_id(worker, "https://lista.mercadolivre.com.br/*")
+    data = worker.evaluate(f"chrome.scripting.executeScript({{target:{{tabId:{tab}}}, files:['search_reader.js']}}).then(r => r[0].result)")
+    page.close(); ctx.unroute("https://lista.mercadolivre.com.br/kettlebell")
+    assert data["source"] == "dados" and [i["external_id"] for i in data["items"]] == ["MLB7579993462", "MLB7912900396"]
+    first = data["items"][0]
+    assert first == {"external_id": "MLB7579993462", "url": "https://produto.mercadolivre.com.br/MLB-7579993462", "title": "Kettlebell 12kg",
+                     "image_url": "https://http2.mlstatic.com/D_NQ_NP_655892-MLB1_092026-O.webp", "seller": "CROMMO",
+                     "price": 158.98, "original_price": 199.9, "price_note": "no Pix", "rating": 4.9, "sold": 500,
+                     "free_shipping": True, "ml_category_id": "MLB999193"}

@@ -279,8 +279,10 @@ def niche_defaults(campaign_id: int, niche_ids: str = "", db: Session = Depends(
             cats[link.category_id] = {"id": link.category_id, "include_children": link.include_children or cats.get(link.category_id, {}).get("include_children", False),
                                       "name": cat.name if cat else link.category_id, "path": cat.path_names if cat else "", "is_leaf": cat.is_leaf if cat else True}
         include += jload(n.include_keywords); exclude += jload(n.exclude_keywords)
+    genders = {n.gender for n in niches if n.gender in ("male", "female")}
     return {"niche_ids": [n.id for n in niches], "categories": list(cats.values()),
-            "include_keywords": clean_list(include), "exclude_keywords": clean_list(exclude)}
+            "include_keywords": clean_list(include), "exclude_keywords": clean_list(exclude),
+            "gender": genders.pop() if len(genders) == 1 else "any"}
 
 
 # ---------------------------------------------------------------- busca dentro da campanha
@@ -292,6 +294,13 @@ class SearchFilters(BaseModel):
     min_rating: float | None = Field(default=None, ge=0, le=5)
     free_shipping: bool = False
     allow_uncategorized: bool = False
+    gender: str = Field(default="any", pattern="^(any|male|female)$")   # público: todos, masculino ou feminino
+    gender_strict: bool = False         # só anúncios que dizem o público (ou unissex) no título ou na categoria
+    # Confiabilidade: vendas mínimas, só loja oficial ou Full, e termos típicos de produto de baixa qualidade.
+    trust: str = Field(default="custom", pattern="^(off|basic|high|custom)$")
+    min_sold: int = Field(default=0, ge=0, le=1000000)
+    official_or_full: bool = False
+    exclude_suspicious: bool = False
 
 class SearchCreate(BaseModel):
     niche_id: int | None = None
@@ -314,6 +323,8 @@ class ResultItem(BaseModel):
     sold: int | None = Field(default=None, ge=0)
     free_shipping: bool = False
     ml_category_id: str | None = Field(default=None, max_length=20)
+    official_store: bool = False
+    fulfillment: bool = False
 
 class SearchResults(BaseModel):
     items: list[ResultItem] = Field(default_factory=list, max_length=600)
@@ -402,7 +413,8 @@ def search_results(campaign_id: int, search_id: int, matched: str = "true", db: 
              "rating": l.rating, "sold": l.sold, "free_shipping": l.free_shipping, "score": l.score, "term": l.term,
              "ml_category_id": l.ml_category_id, "category_name": cats[l.ml_category_id].name if l.ml_category_id in cats else "",
              "category_path": cats[l.ml_category_id].path_names if l.ml_category_id in cats else "",
-             "matched": r.matched, "reason": r.reason, "in_campaign": search_service.listing_in_campaign(l, urls)} for r, l in rows]
+             "matched": r.matched, "reason": r.reason, "in_campaign": search_service.listing_in_campaign(l, urls),
+             "official_store": bool(l.official_store), "fulfillment": bool(l.fulfillment)} for r, l in rows]
 
 
 @router.get("/{campaign_id}/products")

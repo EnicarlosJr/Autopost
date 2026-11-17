@@ -190,8 +190,12 @@ def test_postpone_when_whatsapp_has_no_preview(env):
     client, Session = env
     _set_approval(Session, False)
     pub = client.post("/api/publications", json={"product_id": 1, "message": "Oferta https://meli.la/x"}).json()
-    assert client.post(f"/api/publications/{pub['id']}/postpone", json={}).status_code == 409     # não está em envio
-    for attempt in (1, 2):
+    # Adiada antes de reservar (falha passageira ao gerar o link): conta como 1ª tentativa.
+    early = client.post(f"/api/publications/{pub['id']}/postpone", json={"reason": "link não apareceu"}).json()
+    assert early["status"] == "scheduled" and early["send_attempts"] == 1
+    with Session() as db:
+        db.get(Publication, pub["id"]).scheduled_at = datetime.now(timezone.utc) - timedelta(seconds=5); db.commit()
+    for attempt in (1,):
         client.post(f"/api/publications/{pub['id']}/claim")
         back = client.post(f"/api/publications/{pub['id']}/postpone", json={"minutes": 5, "reason": "sem prévia"}).json()
         assert back["status"] == "scheduled" and back["last_error"] == "sem prévia"
@@ -202,3 +206,16 @@ def test_postpone_when_whatsapp_has_no_preview(env):
             db.get(Publication, pub["id"]).scheduled_at = datetime.now(timezone.utc) - timedelta(seconds=5); db.commit()
     client.post(f"/api/publications/{pub['id']}/claim")
     assert client.post(f"/api/publications/{pub['id']}/postpone", json={"reason": "sem prévia"}).json()["status"] == "failed"
+
+def test_new_affiliate_link_replaces_old_link_in_hand_edited_message(env, monkeypatch):
+    """Mensagem editada à mão com o link comum: ao gerar o meli.la, o link é trocado (senão sairia sem comissão)."""
+    client, Session = env
+    import app.products.service as product_service
+    monkeypatch.setattr(product_service, "download_product_image", lambda url, pid: "")
+    with Session() as db:
+        product = db.get(Product, 1)
+        product.original_url, product.affiliate_url = "https://produto.mercadolivre.com.br/MLB-123", ""
+        db.commit()
+    pub = client.post("/api/publications", json={"product_id": 1, "message": "Olha isso! https://produto.mercadolivre.com.br/MLB-123 corre"}).json()
+    client.post(f"/api/products/1/browser-data", json={"title": "Produto", "price": 10.0, "affiliate_link": "https://meli.la/abc123"})
+    assert client.get(f"/api/publications/{pub['id']}").json()["message"] == "Olha isso! https://meli.la/abc123 corre"

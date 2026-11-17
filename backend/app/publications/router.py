@@ -304,8 +304,11 @@ def postpone_publication(publication_id: int, data: Postpone, db: Session = Depe
     """Devolve uma publicação em envio para a fila, alguns minutos depois (ex.: o WhatsApp não montou a prévia).
     Depois de MAX_POSTPONES tentativas, marca como falha para não ficar adiando para sempre."""
     publication = _get(db, publication_id)
-    if publication.status != "sending":
+    if publication.status not in ("sending", "approved"):
         raise HTTPException(409, "A publicação não está em envio")
+    if publication.status == "approved":
+        # Adiada antes de reservar (ex.: falha passageira ao gerar o link de afiliado): conta como tentativa.
+        publication.send_attempts = (publication.send_attempts or 0) + 1
     publication.last_error = data.reason.strip()[:2000]
     if (publication.send_attempts or 0) >= MAX_POSTPONES:
         publication.status = "failed"

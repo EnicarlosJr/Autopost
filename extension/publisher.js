@@ -38,23 +38,39 @@ function needsAffiliateLink(product) {
   try {
     if (!ML_HOST.test(new URL(product.original_url).hostname)) return false;
   } catch { return false; }
+  // Só conta como link de afiliado o encurtado oficial (meli.la ou mercadolivre.com/sec). Um link comum do
+  // Mercado Livre no lugar dele faria a mensagem sair sem comissão.
   const link = (product.affiliate_url || '').trim();
-  return !link || link === product.original_url;
+  return !/^https:\/\/(meli\.la|(www\.)?mercadolivre\.com(\.br)?\/sec)\//i.test(link);
 }
 
 // Produtos vindos das buscas automáticas chegam sem link de afiliado: a extensão abre o
 // produto no seu Chrome, clica em "Compartilhar" e grava o meli.la (com o preço atualizado).
+// Problemas de conta (não está logado como afiliado, verificação do Mercado Livre) não são culpa da
+// publicação: a fila pausa por 10 min em vez de queimar a campanha inteira como "falha".
+const ACCOUNT_PROBLEM = /barra de afiliados|pediu login|verifica[çc][aã]o|permiss[aã]o/i;
+let accountBlockedUntil = 0;
+export function accountBlocked() { return Date.now() < accountBlockedUntil; }
+
 async function ensureAffiliateLink(id) {
   const current = await api(`/publications/${id}`);
   if (!needsAffiliateLink(current.product)) return;
   log('gerando link de afiliado', current.product.original_url);
   try {
     const data = await captureProduct({url: current.product.original_url, affiliate: true});
+    if (!data.affiliate_link) throw new Error('O Mercado Livre não devolveu o link meli.la.');
     await api(`/products/${current.product.id}/browser-data`, {method: 'POST', body: data});
   } catch (error) {
     const message = `Não consegui gerar o link de afiliado: ${error.message}`;
-    await api(`/publications/${id}/failed`, {method: 'POST', body: {error: message}}).catch(() => {});
-    throw new Error(message);
+    if (ACCOUNT_PROBLEM.test(error.message || '')) {
+      accountBlockedUntil = Date.now() + 10 * 60 * 1000;
+      const blocked = new Error(`${message} A fila pausou por 10 min; a publicação continua na fila.`);
+      blocked.code = 'account';
+      throw blocked;
+    }
+    // Falha passageira (página lenta, link não apareceu): tenta de novo em 5 min, até 3 vezes.
+    const back = await api(`/publications/${id}/postpone`, {method: 'POST', body: {minutes: 5, reason: message}}).catch(() => null);
+    throw new Error(message + (back?.status === 'scheduled' ? ' Nova tentativa em 5 min.' : ''));
   }
 }
 
@@ -69,7 +85,7 @@ export async function sendPublication({id, useOpenChat = false}) {
     await api(`/publications/${id}/sent`, {method: 'POST', body: {detail}});
     return {...result, publication_id: id};
   } catch (error) {
-    if (error.code === 'no_preview') {
+    if (error.code === 'no_preview' || error.code === 'bad_text') {
       // Link recém-criado costuma demorar para o WhatsApp ler: adia alguns minutos em vez de enviar sem prévia.
       const back = await api(`/publications/${id}/postpone`, {method: 'POST', body: {minutes: 5, reason: error.message}}).catch(() => null);
       const later = back?.status === 'scheduled' ? ' Nova tentativa em 5 min.' : '';
@@ -88,10 +104,12 @@ const PREPARE_AHEAD_MS = 30 * 60 * 1000;
 let preparing = false;
 const failedPrepare = new Map();   // id -> horário da falha (tenta de novo depois de 10 min)
 export async function prepareUpcoming() {
-  if (preparing || running || isSending()) return {skipped: 'busy'};
+  if (preparing || running || isSending() || accountBlocked()) return {skipped: 'busy'};
   preparing = true;
   try {
-    const rows = await api('/publications?status=scheduled,approved&limit=50');
+    // "scheduled" vem em ordem de horário; "approved" já está liberada (mais urgente).
+    const [scheduled, approved] = await Promise.all([api('/publications?status=scheduled&limit=50'), api('/publications?status=approved&limit=20')]);
+    const rows = [...approved, ...scheduled];
     const limit = Date.now() + PREPARE_AHEAD_MS;
     const next = rows
       .filter(p => needsAffiliateLink(p.product) && (!p.scheduled_at || new Date(p.scheduled_at).getTime() <= limit))
@@ -101,9 +119,11 @@ export async function prepareUpcoming() {
     log('preparando link de afiliado com antecedência', next.id);
     try {
       const data = await captureProduct({url: next.product.original_url, affiliate: true});
+      if (!data.affiliate_link) throw new Error('O Mercado Livre não devolveu o link meli.la.');
       await api(`/products/${next.product.id}/browser-data`, {method: 'POST', body: data});
       return {prepared: next.id};
     } catch (error) {
+      if (ACCOUNT_PROBLEM.test(error.message || '')) accountBlockedUntil = Date.now() + 10 * 60 * 1000;
       failedPrepare.set(next.id, Date.now());   // na hora do envio tenta de novo, como antes
       log('falha ao preparar', next.id, error.message);
       return {error: error.message};
@@ -123,6 +143,7 @@ export async function processQueueOnce() {
   running = true;
   try {
     if (await nextSendIn(config.sendIntervalSeconds) > 0) return {skipped: 'interval'};
+    if (accountBlocked()) return {skipped: 'account'};
     const queue = await api('/publications/queue?limit=1');
     if (!queue.length) { await setQueueStatus('Fila vazia.'); return {skipped: 'empty'}; }
     if (!await whatsappTab()) { await setQueueStatus('Envio automático parado: abra o WhatsApp Web em uma aba.'); return {skipped: 'no-tab'}; }

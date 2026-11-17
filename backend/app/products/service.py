@@ -72,6 +72,20 @@ def _refresh_publications(db: Session, product: Product, previous_text: str, old
                                       "desta publicação foi editado à mão. Revise o texto e libere de novo.")
 
 
+def _swap_link(db: Session, product: Product, old_links: list[str], new_link: str) -> None:
+    """Link de afiliado novo: troca o link antigo também nas mensagens editadas à mão (que não são
+    reescritas pelo texto padrão). Sem isso a mensagem sairia com o link comum, sem comissão."""
+    old_links = [u for u in old_links if u and u != new_link]
+    if not old_links:
+        return
+    for publication in db.scalars(select(Publication).where(Publication.product_id == product.id,
+                                                            Publication.status.in_(OPEN_STATUSES))):
+        text = publication.message
+        for old in sorted(old_links, key=len, reverse=True):
+            text = text.replace(old, new_link)
+        publication.message = text
+
+
 def apply_capture(db: Session, product: Product, data, *, generate: bool = False) -> None:
     """Grava os dados lidos no navegador do usuário (fonte mais confiável para lojas que bloqueiam o servidor)."""
     previous_text = normalize_offer_text(offer_text(db, product))
@@ -80,6 +94,7 @@ def apply_capture(db: Session, product: Product, data, *, generate: bool = False
     if data.description.strip(): product.description = data.description.strip()
     if data.store.strip(): product.store = data.store.strip()
     link = (getattr(data, "affiliate_link", "") or "").strip()
+    old_links = [u for u in (product.affiliate_url, product.original_url) if u]
     if link.startswith("https://") and " " not in link:
         product.affiliate_url = link
     if data.price is not None:
@@ -98,6 +113,8 @@ def apply_capture(db: Session, product: Product, data, *, generate: bool = False
     product.status = "processed" if product.title else "needs_review"
     product.processing_started_at = None
     _refresh_publications(db, product, previous_text, old_price, old_original)
+    if link and link == product.affiliate_url:
+        _swap_link(db, product, old_links, link)
     if generate:
         maybe_generate_publication(db, product)
 

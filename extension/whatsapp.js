@@ -114,8 +114,9 @@ async function sendInWhatsApp(group, message, useOpenChat, dryRun = false) {
     // Somente texto simples: sem HTML nem imagem na área de transferência.
     const data = new DataTransfer(); data.setData('text/plain', text);
     pasteData(el, data);
-    await sleep(400);
+    // Em máquinas lentas o WhatsApp demora para processar a colagem: espera até 3 s antes do plano B.
     const probe = norm(text.split('\n').find(line => line.trim()) || text).slice(0, 25);
+    for (let end = Date.now() + 3000; Date.now() < end && !norm(textOf(el)).includes(probe);) await sleep(200);
     if (!norm(textOf(el)).includes(probe)) {
       clearField(el);
       document.execCommand('insertText', false, text);
@@ -271,13 +272,28 @@ async function sendInWhatsApp(group, message, useOpenChat, dryRun = false) {
       clearField(composer);
       return result;
     }
+    // Confere se a caixa tem a mensagem inteira (com o link) antes de enviar.
+    const typed = textOf(composer);
+    const linkInMessage = (message.match(/https?:\/\/[^\s]+/) || [])[0];
+    if (linkInMessage && !typed.includes(linkInMessage)) {
+      clearField(composer);
+      return {ok: false, code: 'bad_text', error: 'A mensagem não foi colada inteira na caixa do WhatsApp (o link ficou de fora). Nada foi enviado.'};
+    }
     const button = sendButton(footer);
     if (button) click(button);
     else composer.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true}));
-    await waitFor(() => !textOf(composer).trim(), 15000, 'O WhatsApp não confirmou o envio. Confira a conversa.');
 
-    // 4. Confirmação extra: apareceu uma nova mensagem enviada na conversa.
-    const confirmed = await waitFor(() => countWith(probe) > before, 15000, '').then(() => true).catch(() => false);
+    // 4. Confirmação: a caixa esvaziou e/ou apareceu a nova mensagem na conversa (até 40 s em máquinas lentas).
+    let cleared = false, confirmed = false;
+    for (let end = Date.now() + 40000; Date.now() < end && !(cleared && confirmed);) {
+      cleared = !textOf(composer).trim();
+      confirmed = countWith(probe) > before;
+      if (confirmed && !cleared) await sleep(1000);       // saiu, só falta a caixa limpar
+      else await sleep(400);
+    }
+    if (!cleared && !confirmed) {
+      return {ok: false, code: 'unconfirmed', error: 'Cliquei em enviar, mas o WhatsApp não confirmou em 40 s. Confira no grupo se a mensagem saiu antes de reenviar.'};
+    }
     return {ok: true, confirmed, preview};
   } catch (error) {
     return {ok: false, error: error?.message || String(error)};

@@ -4,7 +4,8 @@ import {getConfig, setConfig, MIN_INTERVAL_SECONDS} from './config.js';
 import {prepareUpcoming, processQueueOnce, sendPublication} from './publisher.js';
 import {isSearching, runDueCampaignSearch, runDueSearch} from './searcher.js';
 import {syncCategories} from './catalog.js';
-import {isSending, nextSendIn, whatsappTab, __test_sendInWhatsApp} from './whatsapp.js';
+import {isSending, nextSendIn, sendToWhatsApp, whatsappTab, __test_sendInWhatsApp} from './whatsapp.js';
+import {api, apiBase64} from './api.js';
 
 // Usado pelos testes de ponta a ponta (tests_e2e) para exercitar o envio numa página simulada.
 globalThis.__autopostTest = {sendInWhatsApp: __test_sendInWhatsApp, generateAffiliateLink: __test_generateAffiliateLink};
@@ -60,6 +61,13 @@ async function handle(message, sender) {
       return campaign?.skipped === 'none' ? runDueSearch() : campaign;
     }
     case 'syncCategories': return syncCategories();
+    case 'testSend': {
+      // Ensaio sem enviar: abre o grupo, cola o texto (ou a foto com legenda), confere e apaga.
+      const {publication_id: id, group} = message.payload || {};
+      const publication = await api(`/publications/${id}`);
+      const imageBase64 = publication.send_mode === 'image' ? await apiBase64(`/publications/${id}/image`) : '';
+      return sendToWhatsApp({group: group || publication.group_name, message: publication.message, imageBase64, dryRun: true});
+    }
     case 'config': {
       // O painel informa o endereço da API em uso.
       const {api} = message.payload || {};

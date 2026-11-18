@@ -52,6 +52,7 @@ function Details({c}: {c: Campaign}) {
       <Typography fontWeight={650} mb={.75}>Configuração</Typography>
       <Stack gap={.5} fontSize={14}>
         <span>Produtos: {seg.length ? seg.join('. ') : 'todos os produtos prontos'}.</span>
+        <span>Envio: {c.send_mode === 'image' ? 'foto + texto' : 'texto com prévia do link'}.</span>
         <span>Distribuição: {strategyLabel[c.strategy]?.[0]}, até {c.total_limit} anúncios.</span>
         <span>Ritmo: {rhythm(c)}, das {c.start_hour}h às {c.end_hour}h, {days}.</span>
         {c.end_at && <span>Termina em {dateTime(c.end_at)}.</span>}

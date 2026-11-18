@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState} from 'react';
-import {Box, Button, Card, CardContent, Checkbox, Chip, FormControlLabel, Grid, Stack, Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip, Typography} from '@mui/material';
+import {Box, Button, Card, CardContent, Checkbox, Chip, FormControlLabel, Grid, Stack, Table, TableBody, TableCell, TableHead, TableRow, TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography} from '@mui/material';
 import {api, apiError} from '../services/api';
 import type {Log, Settings} from '../types/models';
 import {Feedback, Loading} from '../components/Feedback';
@@ -16,6 +16,20 @@ export default function SettingsPage() {
   const [preview, setPreview] = useState<{product_title: string; message: string} | null>(null), [previewError, setPreviewError] = useState('');
   const [error, setError] = useState(''), [notice, setNotice] = useState(''), [loading, setLoading] = useState(true);
   const editor = useRef<HTMLTextAreaElement>(null);
+  const [sample, setSample] = useState(''), [sampleError, setSampleError] = useState('');
+  // Prévia da foto das ofertas avulsas, com a marca d'água digitada.
+  useEffect(() => {
+    if (settings?.send_mode !== 'image') return;
+    let alive = true, url = '';
+    const t = setTimeout(async () => {
+      try {
+        const r = await api.get('/automations/sample-image', {responseType: 'blob', params: {title: settings.watermark_text, handle: settings.watermark_handle}});
+        url = URL.createObjectURL(r.data);
+        if (alive) { setSample(url); setSampleError(''); }
+      } catch (e) { if (alive) { setSample(''); setSampleError(apiError(e, 'Não foi possível gerar a prévia da foto.')); } }
+    }, 600);
+    return () => { alive = false; clearTimeout(t); if (url) URL.revokeObjectURL(url); };
+  }, [settings?.send_mode, settings?.watermark_text, settings?.watermark_handle]);
 
   const loadLogs = () => api.get<Log[]>('/automations/logs').then(r => setLogs(r.data)).catch(e => setError(apiError(e, 'Falha ao carregar o histórico.')));
   const load = () => {
@@ -74,6 +88,30 @@ export default function SettingsPage() {
           <Grid item xs={12} md={6}><TextField fullWidth label="Marketplaces permitidos (separados por vírgula)" value={marketplaces} onChange={e => setMarketplaces(e.target.value)}/></Grid>
           <Grid item xs={12}><TextField fullWidth label="Grupo padrão do WhatsApp (nome exato)" value={settings.whatsapp_group_name || ''} onChange={e => setSettings({...settings, whatsapp_group_name: e.target.value})}/></Grid>
         </Grid>
+      </CardContent></Card>
+
+      <Card sx={{mb: 3}}><CardContent>
+        <Typography variant="h6" mb={.5}>Forma de envio das ofertas avulsas</Typography>
+        <Typography variant="body2" color="text.secondary" mb={1.5}>Vale para as publicações fora de campanha (cada campanha tem a sua). Na Fila dá para trocar só uma publicação em "Editar".</Typography>
+        <ToggleButtonGroup exclusive size="small" value={settings.send_mode || 'preview'} onChange={(_, v) => v && setSettings({...settings, send_mode: v})}
+          sx={{flexWrap: 'wrap', '& .MuiToggleButton-root': {textTransform: 'none', px: 2}}}>
+          <ToggleButton value="preview">Texto com prévia do link</ToggleButton>
+          <ToggleButton value="image">Foto + texto</ToggleButton>
+        </ToggleButtonGroup>
+        {settings.send_mode === 'image' && <Stack direction={{xs: 'column', md: 'row'}} gap={2.5} mt={2} alignItems={{md: 'flex-start'}}>
+          <Stack gap={2} flex={1}>
+            <Typography variant="body2" color="text.secondary">A foto vai em 1080 x 1080, na maior qualidade disponível e sempre do mesmo tamanho, com a mensagem como legenda.</Typography>
+            <TextField label="Marca d'água: nome do grupo" value={settings.watermark_text || ''} onChange={e => setSettings({...settings, watermark_text: e.target.value.slice(0, 60)})}
+              placeholder="Base 92 | Achados e Ofertas" helperText="Vazio = sem faixa de marca d'água."/>
+            <TextField label="Marca d'água: Instagram" value={settings.watermark_handle || ''} onChange={e => setSettings({...settings, watermark_handle: e.target.value.slice(0, 40)})} placeholder="@base92"/>
+          </Stack>
+          <Box sx={{width: 260, flexShrink: 0}}>
+            {sample ? <Box component="img" src={sample} alt="Prévia da foto enviada" sx={{width: 260, height: 260, borderRadius: 2, display: 'block', border: '1px solid rgba(0,0,0,.12)'}}/>
+              : <Box sx={{width: 260, height: 260, borderRadius: 2, border: '1px dashed rgba(0,0,0,.2)', display: 'grid', placeItems: 'center', p: 2, textAlign: 'center'}}>
+                <Typography variant="body2" color="text.secondary">{sampleError || 'Gerando a prévia…'}</Typography></Box>}
+            <Typography variant="caption" display="block" mt={.5}>Prévia com o produto mais recente.</Typography>
+          </Box>
+        </Stack>}
       </CardContent></Card>
 
       <Card sx={{mb: 3}}><CardContent>

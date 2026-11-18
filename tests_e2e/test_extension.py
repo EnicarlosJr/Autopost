@@ -134,7 +134,7 @@ def _payload_page():
     def card(item_id, title, price, previous=None, ads=False, category="MLB999193"):
         prices = [{"values": [{"type": "price", "key": "previous_price", "price": {"value": previous, "previous": True}}]}] if previous else []
         return {"polycard": {"unique_id": "x", "metadata": {"id": item_id, "url": "www.mercadolivre.com.br/x/p/MLB1", "category_id": category,
-                                                            "signal": {"ads": ads}},
+                                                            "signal": {"ads": ads, "sales": 777, "official_store": not ads and title.endswith("12kg"), "ship_logistics": "full"}},
                              "pictures": {"pictures": [{"id": "655892-MLB1_092026"}]},
                              "components": [{"type": "title", "title": {"text": title}},
                                             {"type": "seller", "seller": {"values": [{"label": {"text": "CROMMO"}}]}},
@@ -158,5 +158,5 @@ def test_search_reader_reads_embedded_payload_when_cards_are_not_rendered(browse
     first = data["items"][0]
     assert first == {"external_id": "MLB7579993462", "url": "https://produto.mercadolivre.com.br/MLB-7579993462", "title": "Kettlebell 12kg",
                      "image_url": "https://http2.mlstatic.com/D_NQ_NP_655892-MLB1_092026-O.webp", "seller": "CROMMO",
-                     "price": 158.98, "original_price": 199.9, "price_note": "no Pix", "rating": 4.9, "sold": 500,
-                     "free_shipping": True, "ml_category_id": "MLB999193"}
+                     "price": 158.98, "original_price": 199.9, "price_note": "no Pix", "rating": 4.9, "sold": 777,
+                     "free_shipping": True, "ml_category_id": "MLB999193", "official_store": True, "fulfillment": True}

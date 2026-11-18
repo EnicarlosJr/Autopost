@@ -106,6 +106,7 @@ def apply_capture(db: Session, product: Product, data, *, generate: bool = False
     remove_notes(product, VERIFICATION_NOTICE, BROWSER_NOTICE, "solicitou verificação", "Falha na extração:",
                  "Imagem do navegador", "Prévia do link de afiliado", "Aguardando leitura")
     if data.image_url.startswith(("http://", "https://")):
+        product.image_source_url = data.image_url[:2048]
         try:
             product.image_url = download_product_image(data.image_url, product.id)
         except Exception as exc:  # a imagem é opcional; os preços continuam valendo

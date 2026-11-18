@@ -2,7 +2,7 @@ import {useCallback, useEffect, useRef, useState} from 'react';
 import {useSearchParams} from 'react-router-dom';
 import {Alert, Badge, Box, Button, Card, CardContent, Checkbox, Chip, Collapse, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, IconButton, InputAdornment, MenuItem, Stack, Switch, Tab, Tabs, TextField, Tooltip, Typography} from '@mui/material';
 import {api, apiError} from '../services/api';
-import {extensionStatus, sendPublication, setAutoSend, type ExtensionStatus} from '../services/sender';
+import {extensionStatus, sendPublication, setAutoSend, testSendInWhatsApp, type ExtensionStatus} from '../services/sender';
 import type {Product, Publication, Summary} from '../types/models';
 import {publicationLabel, timeAgo, toLocalInput} from '../labels';
 import {usePaged} from '../hooks/usePaged';
@@ -18,7 +18,8 @@ const TABS: [string, string][] = [['awaiting_approval', 'Aguardando aprovação'
 const EDITABLE = ['pending', 'awaiting_approval', 'approved', 'scheduled', 'failed'];
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-type Draft = {id?: number; product_id: string; group_name: string; scheduled: string; message: string; force_repost: boolean};
+type SendChoice = 'default' | 'preview' | 'image';
+type Draft = {id?: number; product_id: string; group_name: string; scheduled: string; message: string; force_repost: boolean; send_mode: SendChoice};
 
 function PublicationDialog({draft, onClose, onSaved, onError}: {draft: Draft | null; onClose: () => void; onSaved: (text: string) => void; onError: (text: string) => void}) {
   const [value, setValue] = useState<Draft | null>(draft), [products, setProducts] = useState<Product[]>([]), [busy, setBusy] = useState(false);
@@ -32,11 +33,12 @@ function PublicationDialog({draft, onClose, onSaved, onError}: {draft: Draft | n
     try {
       const scheduled = value.scheduled ? new Date(value.scheduled).toISOString() : null;
       if (value.id) {
-        await api.patch(`/publications/${value.id}`, {message: value.message, group_name: value.group_name, ...(scheduled ? {scheduled_at: scheduled} : {clear_schedule: true})});
+        await api.patch(`/publications/${value.id}`, {message: value.message, group_name: value.group_name, send_mode: value.send_mode, ...(scheduled ? {scheduled_at: scheduled} : {clear_schedule: true})});
         onSaved('Publicação atualizada.');
       } else {
         const message = value.message || (await api.get(`/publications/preview/${value.product_id}`)).data.message;
-        await api.post('/publications', {product_id: Number(value.product_id), message, group_name: value.group_name, scheduled_at: scheduled, force_repost: value.force_repost});
+        await api.post('/publications', {product_id: Number(value.product_id), message, group_name: value.group_name, scheduled_at: scheduled, force_repost: value.force_repost,
+          send_mode: value.send_mode === 'default' ? null : value.send_mode});
         onSaved('Publicação criada.');
       }
     } catch (e) { onError(apiError(e, 'Não foi possível salvar a publicação.')); }
@@ -49,6 +51,12 @@ function PublicationDialog({draft, onClose, onSaved, onError}: {draft: Draft | n
         <MenuItem value="">Selecione</MenuItem>{products.map(p => <MenuItem value={String(p.id)} key={p.id}>{p.title || `Produto ${p.id}`}</MenuItem>)}
       </TextField>}
       <TextField label="Grupo do WhatsApp (nome exato)" value={value.group_name} onChange={e => set({group_name: e.target.value})}/>
+      <TextField select label="Forma de envio" value={value.send_mode} onChange={e => set({send_mode: e.target.value as SendChoice})}
+        helperText="Padrão = o da campanha ou, para ofertas avulsas, o das Configurações.">
+        <MenuItem value="default">Padrão</MenuItem>
+        <MenuItem value="preview">Texto com prévia do link</MenuItem>
+        <MenuItem value="image">Foto + texto</MenuItem>
+      </TextField>
       <TextField type="datetime-local" label="Agendar (vazio = enviar quando estiver pronta)" InputLabelProps={{shrink: true}} value={value.scheduled} onChange={e => set({scheduled: e.target.value})}/>
       <TextField multiline minRows={8} label={value.id ? 'Mensagem' : 'Mensagem (vazio usa o modelo das Configurações)'} value={value.message} onChange={e => set({message: e.target.value})}/>
       <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap">
@@ -106,6 +114,16 @@ export default function QueuePage() {
     } catch (e) { setError(apiError(e, 'Falha no envio.')); return false; }
     finally { setBusy(null); reloadAll(); }
   };
+  const testOne = async (p: Publication) => {
+    setBusy(p.id); setError(''); setNotice('');
+    try {
+      const r = await testSendInWhatsApp(p.id);
+      setNotice(p.send_mode === 'image'
+        ? 'Ensaio concluído: a foto abriu no editor do WhatsApp com a legenda completa. Nada foi enviado.'
+        : `Ensaio concluído: o texto foi colado no grupo e apagado. Prévia do link: ${r.preview || 'sem link'}. Nada foi enviado.`);
+    } catch (e) { setError(apiError(e, 'O ensaio falhou.')); }
+    finally { setBusy(null); }
+  };
   const runQueue = async () => {
     stop.current = false; setRunning(true); let sent = 0;
     try {
@@ -123,7 +141,8 @@ export default function QueuePage() {
     try { setExt(await setAutoSend(enabled, interval)); setNotice(enabled ? 'Envio automático ligado: a extensão envia a fila mesmo com o painel fechado.' : 'Envio automático desligado.'); }
     catch (e) { setError(apiError(e, 'Não consegui falar com a extensão.')); }
   };
-  const editDraft = (p: Publication): Draft => ({id: p.id, product_id: String(p.product_id), group_name: p.group_name, scheduled: toLocalInput(p.scheduled_at), message: p.message, force_repost: false});
+  const editDraft = (p: Publication): Draft => ({id: p.id, product_id: String(p.product_id), group_name: p.group_name, scheduled: toLocalInput(p.scheduled_at), message: p.message, force_repost: false,
+    send_mode: p.send_mode_choice ?? 'default'});
   const selectable = list.items.filter(p => [...EDITABLE, 'paused'].includes(p.status)).map(p => p.id);
   const chosen = list.items.filter(p => checked.includes(p.id));
   const canApprove = chosen.filter(p => ['pending', 'awaiting_approval', 'failed'].includes(p.status) || (p.status === 'scheduled' && !p.approved_at));
@@ -137,7 +156,7 @@ export default function QueuePage() {
 
   return <>
     <PageHeader title="Fila" description="Publicações do aprovado ao enviado. A extensão envia pela sua aba do WhatsApp Web."
-      actions={<Button variant="contained" onClick={() => setDraft({product_id: '', group_name: '', scheduled: '', message: '', force_repost: false})}>Nova publicação</Button>}/>
+      actions={<Button variant="contained" onClick={() => setDraft({product_id: '', group_name: '', scheduled: '', message: '', force_repost: false, send_mode: 'default'})}>Nova publicação</Button>}/>
     <Tabs value={tab} onChange={(_, v) => setParams({tab: v})} variant="scrollable" allowScrollButtonsMobile sx={{mb: 2, borderBottom: 1, borderColor: 'divider'}}>
       {TABS.map(([key, label]) => <Tab key={key} value={key} label={<Badge color={key === 'failed' ? 'error' : 'primary'} badgeContent={summary[key] || 0} max={999} sx={{pr: 2.25, '& .MuiBadge-badge': {fontWeight: 700}}}>{label}</Badge>}/>)}
     </Tabs>
@@ -193,11 +212,14 @@ export default function QueuePage() {
           <Meta items={[p.scheduled_at && `Agendada para ${new Date(p.scheduled_at).toLocaleString('pt-BR', {dateStyle: 'short', timeStyle: 'short'})}`,
             p.status === 'scheduled' && (p.approved_at ? 'Já aprovada' : 'Precisa de aprovação'),
             p.sent_at && `Enviada em ${new Date(p.sent_at).toLocaleString('pt-BR', {dateStyle: 'short', timeStyle: 'short'})}`,
+            p.send_mode === 'image' && 'Envio: foto + texto',
             p.send_attempts > 0 && `${p.send_attempts} tentativa(s)`, p.product && `Preço lido ${timeAgo(p.product.captured_at)}`,
             p.campaign_id && `Campanha ${campaigns.find(c => c.id === p.campaign_id)?.name ?? `#${p.campaign_id}`}`]}/>
           {p.last_error && <Alert severity="error" sx={{my: 1}}>{p.last_error}</Alert>}
           <Stack direction="row" flexWrap="wrap" gap={1} mt={1}>
             {p.status === 'approved' && <Button variant="contained" size="small" disabled={!extReady || busy !== null || running || !p.group_name} onClick={() => sendOne(p)}>{busy === p.id ? 'Enviando…' : 'Enviar agora'}</Button>}
+            {['approved', 'scheduled', 'failed'].includes(p.status) && p.group_name && <Tooltip title="Abre o grupo, cola a mensagem (ou a foto com legenda), confere e apaga. Nada é enviado.">
+              <span><Button size="small" disabled={!extReady || busy !== null || running} onClick={() => testOne(p)}>{busy === p.id ? 'Ensaiando…' : 'Ensaiar no WhatsApp'}</Button></span></Tooltip>}
             {['pending', 'awaiting_approval'].includes(p.status) && <Button size="small" variant="contained" onClick={() => action(p, 'approve')}>Aprovar</Button>}
             {p.status === 'failed' && <Button size="small" variant="contained" onClick={() => action(p, 'approve')}>Liberar para reenviar</Button>}
             {p.status === 'scheduled' && !p.approved_at && <Button size="small" onClick={() => action(p, 'approve')}>Aprovar agendamento</Button>}
@@ -205,7 +227,7 @@ export default function QueuePage() {
             {EDITABLE.includes(p.status) && <Button size="small" color="error" onClick={() => action(p, 'cancel')}>Cancelar</Button>}
             <Button size="small" onClick={() => setExpanded(e => e.includes(p.id) ? e.filter(x => x !== p.id) : [...e, p.id])} aria-expanded={expanded.includes(p.id)}>
               {expanded.includes(p.id) ? 'Ocultar mensagem' : 'Ver mensagem'}</Button>
-            {p.status === 'sent' && <Button size="small" onClick={() => setDraft({product_id: String(p.product_id), group_name: p.group_name, scheduled: '', message: '', force_repost: true})}>Repostar</Button>}
+            {p.status === 'sent' && <Button size="small" onClick={() => setDraft({product_id: String(p.product_id), group_name: p.group_name, scheduled: '', message: '', force_repost: true, send_mode: p.send_mode_choice ?? 'default'})}>Repostar</Button>}
           </Stack>
         </Box>
       </CardContent></Card>;

@@ -21,6 +21,9 @@ class SettingsUpdate(BaseModel):
     marketplaces: list[str] = Field(default_factory=list)
     whatsapp_group_name: str = Field(default="", max_length=160)
     message_template: str = Field(default="", max_length=4000)
+    send_mode: str = Field(default="preview", pattern="^(preview|image)$")
+    watermark_text: str = Field(default="", max_length=80)
+    watermark_handle: str = Field(default="", max_length=60)
 
 class SettingsRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -34,6 +37,9 @@ class SettingsRead(BaseModel):
     marketplaces: list[str]
     whatsapp_group_name: str
     message_template: str
+    send_mode: str = "preview"
+    watermark_text: str = ""
+    watermark_handle: str = ""
     default_template: str
     updated_at: datetime
 
@@ -46,6 +52,7 @@ def as_settings(row: AutomationRule) -> dict:
             "generate_publication": row.generate_publication, "require_approval": row.require_approval,
             "categories": json.loads(row.categories or "[]"), "marketplaces": json.loads(row.marketplaces or "[]"),
             "whatsapp_group_name": row.whatsapp_group_name, "message_template": row.message_template or "",
+            "send_mode": row.send_mode or "preview", "watermark_text": row.watermark_text or "", "watermark_handle": row.watermark_handle or "",
             "default_template": DEFAULT_TEMPLATE, "updated_at": row.updated_at}
 
 def _settings_row(db: Session) -> AutomationRule:
@@ -68,6 +75,24 @@ def _save(row: AutomationRule, data: SettingsUpdate) -> None:
     values["message_template"] = template
     for key, value in values.items():
         setattr(row, key, value)
+
+@router.get("/sample-image")
+def sample_image(product_id: int | None = None, title: str | None = None, handle: str | None = None, db: Session = Depends(get_db)):
+    """Prévia da foto das ofertas avulsas (aceita a marca d'água ainda não salva)."""
+    from fastapi import Response
+    from sqlalchemy import select
+    from app.models.product import Product
+    from app.products.social_image import social_image
+    row = _settings_row(db)
+    product = db.get(Product, product_id) if product_id else db.scalar(
+        select(Product).where(Product.status == "processed", Product.image_url != "").order_by(Product.id.desc()).limit(1))
+    if not product:
+        raise HTTPException(404, "Cadastre um produto com foto para ver a prévia.")
+    try:
+        data = social_image(product, row.watermark_text if title is None else title, row.watermark_handle if handle is None else handle)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 @router.get("/settings", response_model=SettingsRead)
 def get_settings(db: Session = Depends(get_db)):

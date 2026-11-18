@@ -267,6 +267,8 @@ def product_for(db: Session, listing: Listing) -> Product:
         tags = json.loads(product.tags or "[]")
         if listing.term.casefold() not in {t.casefold() for t in tags}:
             product.tags = json.dumps(tags + [listing.term], ensure_ascii=False)
+    if listing.image_url.startswith("https://") and not product.image_source_url:
+        product.image_source_url = listing.image_url[:2048]
     if listing.image_url.startswith("https://") and not product.image_url:
         try:
             product.image_url = download_product_image(listing.image_url, product.id)

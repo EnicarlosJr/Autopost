@@ -29,6 +29,8 @@ class Product(Base):
     title: Mapped[str] = mapped_column(String(500), default="")
     description: Mapped[str] = mapped_column(Text, default="")
     image_url: Mapped[str] = mapped_column(String(2048), default="")
+    # Endereço original da foto na loja (usado para buscar a versão de maior qualidade no envio com foto).
+    image_source_url: Mapped[str] = mapped_column(String(2048), default="", server_default="")
     # Numeric guarda centavos exatos no banco; asdecimal=False mantém float no Python.
     price: Mapped[float | None] = mapped_column(Numeric(12, 2, asdecimal=False), nullable=True)
     original_price: Mapped[float | None] = mapped_column(Numeric(12, 2, asdecimal=False), nullable=True)

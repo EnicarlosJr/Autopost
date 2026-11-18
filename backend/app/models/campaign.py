@@ -43,6 +43,10 @@ class Campaign(Base):
     message_gap_seconds: Mapped[int] = mapped_column(Integer, default=20, server_default="20")
     reuse_days: Mapped[int | None] = mapped_column(Integer, nullable=True)        # None = prazo de repostagem do grupo
     group_daily_limit: Mapped[int] = mapped_column(Integer, default=0, server_default="0")   # 0 = sem limite
+    # Forma de envio: "preview" (só texto, o WhatsApp monta a prévia do link) ou "image" (foto padronizada + legenda).
+    send_mode: Mapped[str] = mapped_column(String(10), default="preview", server_default="preview")
+    watermark_text: Mapped[str] = mapped_column(String(80), default="", server_default="")     # ex.: nome do grupo
+    watermark_handle: Mapped[str] = mapped_column(String(60), default="", server_default="")   # ex.: @instagram
     # Dono (perfil) e segmentação oficial. Os nichos aplicados são copiados: mudar a campanha não muda o nicho.
     owner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     niche_ids: Mapped[str] = mapped_column(Text, default="[]")

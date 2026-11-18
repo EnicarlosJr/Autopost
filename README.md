@@ -103,6 +103,23 @@ Ao confirmar, a campanha vira publicações agendadas comuns e sai pela mesma fi
 
 Os achados aprovados recebem a categoria oficial identificada pelo Mercado Livre e o termo da busca como tag.
 
+## Forma de envio: prévia do link ou foto + texto
+
+Cada campanha escolhe, em **Regras de automação > Forma de envio**:
+
+- **Texto com prévia do link:** envia só o texto; o WhatsApp monta o cartão com foto e título do link.
+- **Foto + texto:** envia a foto do produto com a mensagem como legenda. A foto vem na maior qualidade que o Mercado Livre oferece, tem as bordas brancas cortadas e é padronizada em 1080 x 1080, então todas ficam do mesmo tamanho. Opcionalmente, uma faixa no rodapé com o nome do grupo e o Instagram (marca d'água). A tela mostra a prévia da foto com o primeiro produto da campanha.
+
+As **ofertas avulsas** (fora de campanha: aprovadas em Achados, criadas na Fila ou geradas pelos Produtos) usam a forma de envio e a marca d'água definidas em **Configurações > Forma de envio das ofertas avulsas**. Para trocar só uma publicação, use **Editar** na Fila e escolha a forma de envio (Padrão, Texto com prévia do link ou Foto + texto).
+
+Para conferir antes, use **Ensaiar no WhatsApp** na **Fila**: a extensão abre o grupo, cola a mensagem (ou a foto com legenda), confere e apaga, sem enviar nada.
+
+## Envio automático: janela coberta
+
+O Chrome "congela" páginas que não estão visíveis. Quando a janela do WhatsApp fica minimizada, coberta por outro programa ou com a tela bloqueada, o WhatsApp não processa o texto colado nem monta a prévia. A extensão traz a janela para a frente antes de cada envio, mas o Windows às vezes não deixa.
+
+Para o Chrome tratar a janela como visível mesmo coberta, abra o Chrome por um atalho com `--disable-backgrounding-occluded-windows` no fim do campo **Destino** (Propriedades do atalho). Deixe a tela sem bloquear enquanto houver campanha rodando.
+
 ## Grupos
 
 Em **Grupos**, cadastre os grupos pelo nome exato do WhatsApp, defina as categorias oficiais do Mercado Livre que cada um recebe (usadas na distribuição por categoria), o horário, o limite por dia e o prazo para repostar. Grupos inativos não aparecem nas campanhas.

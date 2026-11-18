@@ -9,6 +9,7 @@ export type CampaignConfig = {
   block_size: number; interval_minutes: number; interval_max_minutes: number; start_at: string | null;
   start_hour: number; end_hour: number; weekdays: number[]; daily_limit: number; pause_every: number; pause_minutes: number;
   end_at: string | null; message_gap_seconds: number; reuse_days: number | null; group_daily_limit: number;
+  send_mode: 'preview' | 'image'; watermark_text: string; watermark_handle: string;
 };
 
 export type Campaign = CampaignConfig & {

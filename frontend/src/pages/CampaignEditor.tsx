@@ -18,7 +18,8 @@ const STEPS = ['Informações', 'Nichos e categorias', 'Busca de produtos', 'Sel
 const EMPTY: CampaignConfig = {name: '', niche_ids: [], ml_categories: [], include_keywords: [], exclude_keywords: [], product_ids: [], categories: [], exclude_categories: [], tags: [], tag_mode: 'any', exclude_tags: [],
   include_uncategorized: false, min_discount: 0, groups: [], strategy: 'balanced', total_limit: 20, block_size: 1, interval_minutes: 5,
   interval_max_minutes: 0, start_at: null, start_hour: 8, end_hour: 22, weekdays: [0, 1, 2, 3, 4, 5, 6], daily_limit: 0, pause_every: 0, pause_minutes: 0,
-  end_at: null, message_gap_seconds: 20, reuse_days: null, group_daily_limit: 0};
+  end_at: null, message_gap_seconds: 20, reuse_days: null, group_daily_limit: 0,
+  send_mode: 'preview', watermark_text: '', watermark_handle: ''};
 const PRESETS: [string, Partial<CampaignConfig>][] = [
   ['1 a cada 2 min', {block_size: 1, interval_minutes: 2, interval_max_minutes: 0}],
   ['1 a cada 5 min', {block_size: 1, interval_minutes: 5, interval_max_minutes: 0}],
@@ -61,6 +62,7 @@ export default function CampaignEditor() {
   const [campaignId, setCampaignId] = useState<number | null>(id ? Number(id) : null);
   const [niches, setNiches] = useState<Niche[]>([]), [products, setProducts] = useState<CampaignProductRow[]>([]), [removing, setRemoving] = useState<number[]>([]);
   const [legacy, setLegacy] = useState(false);
+  const [sample, setSample] = useState(''), [sampleError, setSampleError] = useState('');
   const [sets, setSets] = useState<GroupSet[]>([]), [setName, setSetName] = useState('');
   const loadSets = useCallback(() => api.get<GroupSet[]>('/group-sets').then(r => setSets(r.data)).catch(() => {}), []);
   useEffect(() => { loadSets(); }, [loadSets]);
@@ -322,7 +324,49 @@ export default function CampaignEditor() {
     </Box>
   </Stack>;
 
+  // Prévia da foto padronizada (com a marca d'água digitada, mesmo antes de salvar).
+  useEffect(() => {
+    if (config.send_mode !== 'image' || !campaignId) return;
+    let alive = true, url = '';
+    const t = setTimeout(async () => {
+      try {
+        const r = await api.get(`/campaigns/${campaignId}/sample-image`, {responseType: 'blob', params: {title: config.watermark_text, handle: config.watermark_handle}});
+        url = URL.createObjectURL(r.data);
+        if (alive) { setSample(url); setSampleError(''); }
+      } catch (e) { if (alive) { setSample(''); setSampleError(apiError(e, 'Não foi possível gerar a prévia da foto.')); } }
+    }, 600);
+    return () => { alive = false; clearTimeout(t); if (url) URL.revokeObjectURL(url); };
+  }, [config.send_mode, config.watermark_text, config.watermark_handle, campaignId, products.length]);
+
+  const sendModeBox = <Box>
+    <Typography fontWeight={600} mb={1}>Forma de envio</Typography>
+    <ToggleButtonGroup exclusive size="small" value={config.send_mode} onChange={(_, v) => v && set({send_mode: v})}
+      sx={{flexWrap: 'wrap', '& .MuiToggleButton-root': {textTransform: 'none', px: 2}}}>
+      <ToggleButton value="preview">Texto com prévia do link</ToggleButton>
+      <ToggleButton value="image">Foto + texto</ToggleButton>
+    </ToggleButtonGroup>
+    <Typography variant="body2" color="text.secondary" mt={.75}>
+      {config.send_mode === 'image'
+        ? 'Envia a foto do produto em 1080 x 1080 (maior qualidade disponível, sempre do mesmo tamanho) com a mensagem como legenda. O link fica clicável no texto.'
+        : 'Envia só o texto; o WhatsApp monta o cartão com foto e título do link. Use "Ensaiar no WhatsApp" na Fila para conferir se a prévia está aparecendo.'}
+    </Typography>
+    {config.send_mode === 'image' && <Stack direction={{xs: 'column', md: 'row'}} gap={2.5} mt={2} alignItems={{md: 'flex-start'}}>
+      <Stack gap={2} flex={1}>
+        <TextField label="Marca d'água: nome do grupo" value={config.watermark_text} onChange={e => set({watermark_text: e.target.value.slice(0, 60)})}
+          placeholder="Base 92 | Achados e Ofertas" helperText="Vazio = sem faixa de marca d'água."/>
+        <TextField label="Marca d'água: Instagram" value={config.watermark_handle} onChange={e => set({watermark_handle: e.target.value.slice(0, 40)})} placeholder="@base92"/>
+      </Stack>
+      <Box sx={{width: 260, flexShrink: 0}}>
+        {sample ? <Box component="img" src={sample} alt="Prévia da foto enviada" sx={{width: 260, height: 260, borderRadius: 2, border: `1px solid ${tokens.line}`, display: 'block'}}/>
+          : <Box sx={{width: 260, height: 260, borderRadius: 2, border: `1px dashed ${tokens.line}`, display: 'grid', placeItems: 'center', p: 2, textAlign: 'center'}}>
+            <Typography variant="body2" color="text.secondary">{sampleError || (products.length ? 'Gerando a prévia…' : 'Adicione produtos para ver a prévia da foto.')}</Typography></Box>}
+        <Typography variant="caption" display="block" mt={.5}>Prévia com o primeiro produto da campanha.</Typography>
+      </Box>
+    </Stack>}
+  </Box>;
+
   const rhythmStep = <Stack gap={2.5}>
+    {sendModeBox}
     <Box>
       <Typography fontWeight={600} mb={1}>Ritmo</Typography>
       <ToggleButtonGroup exclusive size="small" value={PRESETS.find(([, p]) => p.block_size === config.block_size && p.interval_minutes === config.interval_minutes && !config.interval_max_minutes)?.[0] ?? null}
@@ -376,6 +420,7 @@ export default function CampaignEditor() {
   const reviewStep = !plan ? <Typography>Calculando…</Typography> : <Stack gap={2}>
     <Box sx={{display: 'grid', gridTemplateColumns: {xs: '1fr', sm: '180px 1fr'}, rowGap: 1, columnGap: 2, fontSize: 14.5}}>
       {[['Nome', config.name || 'sem nome'],
+        ['Forma de envio', config.send_mode === 'image' ? `Foto + texto${config.watermark_text || config.watermark_handle ? ` (marca d'água: ${[config.watermark_text, config.watermark_handle].filter(Boolean).join(' / ')})` : ''}` : 'Texto com prévia do link'],
         ['Nichos', niches.filter(n => config.niche_ids.includes(n.id)).map(n => n.name).join(', ') || 'nenhum'],
         ['Categorias oficiais', config.ml_categories.map(c => c.name || c.id).join(', ') || 'qualquer'],
         ['Produtos', products.length ? `${products.length} na campanha, ${plan.selected} usados` : `${plan.matching} encontrados, ${plan.selected} usados`],

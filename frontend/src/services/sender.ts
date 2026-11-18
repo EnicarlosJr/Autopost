@@ -54,6 +54,11 @@ export function sendPublication(id: number, useOpenChat = false): Promise<SendRe
   return callExtension<SendResult>('sendPublication', {id, useOpenChat}, 180000);
 }
 
+/** Ensaio sem enviar: abre o grupo, cola o texto (ou a foto com legenda), confere e apaga. */
+export function testSendInWhatsApp(id: number): Promise<{ok: boolean; preview?: string; composer?: string}> {
+  return callExtension('testSend', {publication_id: id}, 180000);
+}
+
 /** Abre o produto numa aba em segundo plano e lê nome, imagem e preços. */
 export function captureInBrowser(url: string, affiliateUrl?: string): Promise<BrowserCapture> {
   return callExtension<BrowserCapture>('capture', {url, affiliate_url: affiliateUrl}, 90000);

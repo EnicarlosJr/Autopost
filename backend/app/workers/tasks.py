@@ -61,6 +61,7 @@ def process_product(self, product_id: int):
             apply_server_fields(product, fields)
             if image_url and not product.image_url.startswith(os.getenv("APP_PUBLIC_URL", "http://localhost:8000")):
                 try:
+                    product.image_source_url = image_url[:2048]
                     product.image_url = download_product_image(image_url, product.id)
                 except Exception as image_error:
                     _record(db, self.request.id, "products.image", product.id, "warning", attempt, image_error)

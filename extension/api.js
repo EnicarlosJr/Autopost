@@ -10,6 +10,21 @@ export async function hasToken() {
   return Boolean(apiToken);
 }
 
+/** Baixa um arquivo da API (ex.: a foto padronizada) e devolve em base64, para passar à aba do WhatsApp. */
+export async function apiBase64(path) {
+  const [{apiBase}, {apiToken}] = await Promise.all([getConfig(), chrome.storage.local.get('apiToken')]);
+  const response = await fetch(`${apiBase}${path}`, {headers: {Authorization: `Bearer ${apiToken}`}}).catch(() => null);
+  if (!response) throw new ApiError('Não consegui falar com o Autopost para baixar a foto.', 0);
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new ApiError(typeof data.detail === 'string' ? data.detail : `Não consegui gerar a foto (${response.status}).`, response.status);
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
+}
+
 export async function api(path, {method = 'GET', body} = {}) {
   const [{apiBase}, {apiToken}] = await Promise.all([getConfig(), chrome.storage.local.get('apiToken')]);
   if (!apiToken) throw new ApiError('Abra o painel do Autopost neste Chrome e faça login.', 401);

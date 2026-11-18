@@ -69,6 +69,9 @@ class CampaignWrite(BaseModel):
     message_gap_seconds: int = Field(default=20, ge=20, le=3600)
     reuse_days: int | None = Field(default=None, ge=0, le=365)
     group_daily_limit: int = Field(default=0, ge=0, le=500)
+    send_mode: str = Field(default="preview", pattern="^(preview|image)$")
+    watermark_text: str = Field(default="", max_length=80)
+    watermark_handle: str = Field(default="", max_length=60)
 
     @field_validator("weekdays")
     @classmethod
@@ -94,7 +97,7 @@ def _read(db: Session, c: Campaign) -> dict:
     data = {name: getattr(c, name) for name in ("id", "name", "status", "tag_mode", "include_uncategorized", "min_discount",
             "strategy", "total_limit", "block_size", "interval_minutes", "interval_max_minutes", "start_at", "start_hour",
             "end_hour", "daily_limit", "pause_every", "pause_minutes", "created_at", "confirmed_at", "end_at",
-            "message_gap_seconds", "reuse_days", "group_daily_limit")}
+            "message_gap_seconds", "reuse_days", "group_daily_limit", "send_mode", "watermark_text", "watermark_handle")}
     data.update({name: jload(getattr(c, name)) for name in LISTS})
     data.update({
         "display_status": service.display_status(c, counts),
@@ -264,6 +267,24 @@ def delete(campaign_id: int, db: Session = Depends(get_db), user: User = Depends
 
 
 # ---------------------------------------------------------------- nichos aplicados à campanha
+
+@router.get("/{campaign_id}/sample-image")
+def sample_image(campaign_id: int, product_id: int | None = None, title: str | None = None, handle: str | None = None,
+                 db: Session = Depends(get_db), user: User = Depends(require_user)):
+    """Prévia da imagem do envio "foto + texto" (aceita a marca d'água ainda não salva, para ver antes de salvar)."""
+    from app.products.social_image import social_image
+    c = _get(db, campaign_id, user)
+    pid = product_id or db.scalar(select(CampaignProduct.product_id).where(CampaignProduct.campaign_id == c.id)
+                                  .order_by(CampaignProduct.added_at).limit(1))
+    product = db.get(Product, pid) if pid else None
+    if not product:
+        raise HTTPException(404, "Adicione um produto à campanha para ver a imagem.")
+    try:
+        data = social_image(product, c.watermark_text if title is None else title, c.watermark_handle if handle is None else handle)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
 
 @router.get("/{campaign_id}/niche-defaults")
 def niche_defaults(campaign_id: int, niche_ids: str = "", db: Session = Depends(get_db), user: User = Depends(require_user)):

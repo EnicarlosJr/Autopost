@@ -1,6 +1,6 @@
 // Envio de uma publicação: reserva, confere o preço se preciso, envia e registra o resultado.
 // Usado tanto pelo botão do painel quanto pela fila automática.
-import {api, ApiError} from './api.js';
+import {api, apiBase64, ApiError} from './api.js';
 import {captureProduct} from './capture.js';
 import {getConfig, log} from './config.js';
 import {nextSendIn, sendToWhatsApp, whatsappTab, isSending} from './whatsapp.js';
@@ -78,14 +78,15 @@ export async function sendPublication({id, useOpenChat = false}) {
   await ensureAffiliateLink(id);
   const publication = await claim(id);
   try {
-    // Só o texto, no formato definido nas Configurações (sem foto).
-    const result = await sendToWhatsApp({group: publication.group_name, message: publication.message, useOpenChat});
+    // Forma de envio da campanha: só o texto (o WhatsApp monta a prévia do link) ou foto padronizada + legenda.
+    const imageBase64 = publication.send_mode === 'image' ? await apiBase64(`/publications/${id}/image`) : '';
+    const result = await sendToWhatsApp({group: publication.group_name, message: publication.message, useOpenChat, imageBase64});
     const detail = `Prévia do link: ${result.preview || 'sem link'}. Mensagem vista na conversa: ${result.confirmed ? 'sim' : 'não confirmada'}.`;
     log('enviada', id, detail);
     await api(`/publications/${id}/sent`, {method: 'POST', body: {detail}});
     return {...result, publication_id: id};
   } catch (error) {
-    if (error.code === 'no_preview' || error.code === 'bad_text') {
+    if (['no_preview', 'bad_text', 'hidden', 'no_editor'].includes(error.code)) {
       // Link recém-criado costuma demorar para o WhatsApp ler: adia alguns minutos em vez de enviar sem prévia.
       const back = await api(`/publications/${id}/postpone`, {method: 'POST', body: {minutes: 5, reason: error.message}}).catch(() => null);
       const later = back?.status === 'scheduled' ? ' Nova tentativa em 5 min.' : '';

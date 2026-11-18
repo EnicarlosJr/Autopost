@@ -21,12 +21,14 @@ class Offer(BaseModel):
     scheduled_at: datetime | None = None
     group_name: str = Field(default="", max_length=160)
     force_repost: bool = False
+    send_mode: str | None = Field(default=None, pattern="^(preview|image)$")   # vazio = padrão
 
 class OfferUpdate(BaseModel):
     message: str | None = Field(default=None, min_length=1, max_length=4096)
     group_name: str | None = Field(default=None, max_length=160)
     scheduled_at: datetime | None = None
     clear_schedule: bool = False
+    send_mode: str | None = Field(default=None, pattern="^(preview|image|default)$")   # "default" volta ao padrão
 
 class SendReceipt(BaseModel):
     group_name: str | None = Field(default=None, max_length=160)
@@ -67,6 +69,8 @@ class PublicationRead(BaseModel):
     approved_at: datetime | None = None
     send_attempts: int = 0
     last_error: str = ""
+    send_mode: str = "preview"          # "preview" (texto com prévia do link) ou "image" (foto + legenda)
+    send_mode_choice: str | None = None  # escolhida só para esta publicação (vazio = padrão)
     product: ProductBrief | None = None
 
     @field_validator("message")
@@ -172,7 +176,7 @@ def create_publication(data: Offer, db: Session = Depends(get_db)):
     if conflict and not (conflict[0] == "recent" and data.force_repost):
         raise HTTPException(409, conflict[1])
     publication = Publication(product_id=product.id, message=normalize_offer_text(data.message), group_name=group,
-                              scheduled_at=data.scheduled_at)
+                              scheduled_at=data.scheduled_at, send_mode_choice=data.send_mode)
     publication.status = initial_status(publication, approval_required(db))
     db.add(publication)
     return _commit(db, publication)
@@ -194,6 +198,8 @@ def update_publication(publication_id: int, data: OfferUpdate, db: Session = Dep
         if conflict and conflict[0] == "active":
             raise HTTPException(409, conflict[1])
         publication.group_name = group
+    if data.send_mode is not None:
+        publication.send_mode_choice = None if data.send_mode == "default" else data.send_mode
     if data.clear_schedule:
         publication.scheduled_at = None
     elif data.scheduled_at is not None:
@@ -248,6 +254,20 @@ def cancel(publication_id: int, db: Session = Depends(get_db)):
         raise HTTPException(409, "Ação incompatível com o estado atual")
     publication.status = "cancelled"
     return _commit(db, publication)
+
+@router.get("/{publication_id}/image")
+def publication_image(publication_id: int, db: Session = Depends(get_db)):
+    """Foto padronizada (1080 x 1080, com a marca d'água da campanha) usada no envio "foto + texto"."""
+    from app.products.social_image import social_image
+    publication = _get(db, publication_id)
+    if not publication.product:
+        raise HTTPException(404, "Publicação sem produto")
+    _, title, handle = publication.delivery()
+    try:
+        data = social_image(publication.product, title, handle)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 @router.post("/{publication_id}/claim", response_model=PublicationRead)
 def claim_for_sending(publication_id: int, db: Session = Depends(get_db)):

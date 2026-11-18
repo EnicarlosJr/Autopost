@@ -21,11 +21,11 @@ export async function whatsappTab() {
   return tabs.find(t => t.active) || tabs[0] || null;
 }
 
-export async function sendToWhatsApp({group, message, useOpenChat = false}) {
+export async function sendToWhatsApp({group, message, useOpenChat = false, imageBase64 = '', dryRun = false}) {
   group = (group || '').trim(); message = (message || '').trim();
   if (!group || !message) throw new Error('Selecione um grupo e uma mensagem não vazia.');
   if (busy) throw new Error('Outro envio já está em andamento.');
-  const wait = await nextSendIn();
+  const wait = dryRun ? 0 : await nextSendIn();
   if (wait > 0) throw new Error(`Aguarde ${wait} s antes do próximo envio.`);
   const tab = await whatsappTab();
   if (!tab) throw new Error('Abra o WhatsApp Web (web.whatsapp.com) em uma aba deste navegador.');
@@ -45,7 +45,7 @@ export async function sendToWhatsApp({group, message, useOpenChat = false}) {
     const [injection] = await chrome.scripting.executeScript({
       target: {tabId: tab.id},
       func: sendInWhatsApp,
-      args: [group, message, Boolean(useOpenChat)],
+      args: [group, message, Boolean(useOpenChat), Boolean(dryRun), imageBase64 || ''],
     });
     const result = injection?.result;
     if (!result?.ok) {
@@ -53,6 +53,7 @@ export async function sendToWhatsApp({group, message, useOpenChat = false}) {
       error.code = result?.code || '';
       throw error;
     }
+    if (result.dryRun) return result;
     await chrome.storage.local.set({lastSentAt: Date.now()});
     return {sent: true, confirmed: Boolean(result.confirmed), group, preview: result.preview || ''};
   } finally {
@@ -66,7 +67,7 @@ export async function sendToWhatsApp({group, message, useOpenChat = false}) {
 // ---------------------------------------------------------------------------
 // Executada DENTRO da aba do WhatsApp Web. Precisa ser autocontida (sem imports).
 // ---------------------------------------------------------------------------
-async function sendInWhatsApp(group, message, useOpenChat, dryRun = false) {
+async function sendInWhatsApp(group, message, useOpenChat, dryRun = false, imageBase64 = '') {
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const visible = el => Boolean(el) && el.getClientRects().length > 0;
   // Ignora maiúsculas, espaços repetidos e caracteres invisíveis (comuns em nomes com emoji).
@@ -81,20 +82,20 @@ async function sendInWhatsApp(group, message, useOpenChat, dryRun = false) {
     throw new Error(error);
   };
   const textOf = el => (el?.tagName === 'INPUT' ? el.value : el?.innerText) || '';
-  const clearField = el => {
+  // O editor do WhatsApp (Lexical) só apaga quando recebe o evento "beforeinput" com a seleção cobrindo
+  // todo o conteúdo; execCommand fica como reserva. A tela pode demorar para refletir (máquina lenta ou
+  // janela em segundo plano), por isso tenta algumas vezes e espera até 3 s.
+  const clearField = async el => {
     el.focus();
     if (el.tagName === 'INPUT') return;
-    if (!textOf(el).trim()) return;
-    // O editor do WhatsApp (Lexical) só apaga quando recebe o evento "beforeinput" com a seleção
-    // cobrindo todo o conteúdo. execCommand fica como reserva para outros campos.
-    const selection = getSelection();
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    selection.removeAllRanges(); selection.addRange(range);
-    el.dispatchEvent(new InputEvent('beforeinput', {inputType: 'deleteContentBackward', bubbles: true, cancelable: true}));
-    if (textOf(el).trim()) {
+    for (let attempt = 0, end = Date.now() + 3000; textOf(el).trim() && Date.now() < end; attempt++) {
+      const selection = getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(el);
       selection.removeAllRanges(); selection.addRange(range);
-      document.execCommand('delete', false);
+      if (attempt % 2 === 0) el.dispatchEvent(new InputEvent('beforeinput', {inputType: 'deleteContentBackward', bubbles: true, cancelable: true}));
+      else document.execCommand('delete', false);
+      for (let wait = Date.now() + 500; textOf(el).trim() && Date.now() < wait;) await sleep(100);
     }
   };
   const pasteData = (el, data) => {
@@ -108,7 +109,7 @@ async function sendInWhatsApp(group, message, useOpenChat, dryRun = false) {
       el.dispatchEvent(new Event('input', {bubbles: true}));
       return;
     }
-    clearField(el);
+    await clearField(el);
     await sleep(150);
     if (textOf(el).trim()) throw new Error('Não consegui limpar a caixa de mensagem do WhatsApp (havia um rascunho). Apague o texto da conversa e tente de novo.');
     // Somente texto simples: sem HTML nem imagem na área de transferência.
@@ -118,7 +119,7 @@ async function sendInWhatsApp(group, message, useOpenChat, dryRun = false) {
     const probe = norm(text.split('\n').find(line => line.trim()) || text).slice(0, 25);
     for (let end = Date.now() + 3000; Date.now() < end && !norm(textOf(el)).includes(probe);) await sleep(200);
     if (!norm(textOf(el)).includes(probe)) {
-      clearField(el);
+      await clearField(el);
       document.execCommand('insertText', false, text);
       await sleep(300);
     }
@@ -142,6 +143,12 @@ async function sendInWhatsApp(group, message, useOpenChat, dryRun = false) {
   const countWith = probe => bubbles().filter(el => (el.innerText || el.textContent || '').includes(probe) || norm(el.innerText || '').includes(probe)).length;
 
   try {
+    // Página oculta (janela coberta por outro programa, minimizada ou tela bloqueada): o Chrome congela
+    // o WhatsApp e nada funciona direito. Espera até 8 s ela aparecer; se não, desiste sem mexer em nada.
+    for (let end = Date.now() + 8000; document.visibilityState === 'hidden' && Date.now() < end;) await sleep(250);
+    if (document.visibilityState === 'hidden') {
+      return {ok: false, code: 'hidden', error: 'A janela do WhatsApp estava escondida atrás de outro programa, minimizada ou com a tela bloqueada, e o Chrome congela a página nessa situação. Nada foi enviado. Veja a dica "janela coberta" no README.'};
+    }
     await waitFor(() => document.querySelector('#pane-side') || document.querySelector('#side'), 30000,
       'O WhatsApp Web não está carregado. Abra a aba e leia o QR Code se for preciso.');
 
@@ -206,6 +213,62 @@ async function sendInWhatsApp(group, message, useOpenChat, dryRun = false) {
       return (clone.textContent || '').replace(/\s+/g, ' ').trim();
     };
     const baseText = footerText();   // textos fixos do rodapé (ex.: "Digite uma mensagem")
+
+    if (imageBase64) {
+      // 3b. Foto + legenda: cola a foto na caixa (abre o editor de mídia do WhatsApp), cola o texto como legenda e envia.
+      const probe = probeOf(message);
+      const before = countWith(probe);
+      await clearField(composer);
+      if (textOf(composer).trim()) throw new Error('Não consegui limpar a caixa de mensagem do WhatsApp (havia um rascunho). Apague o texto da conversa e tente de novo.');
+      const bytes = Uint8Array.from(atob(imageBase64), c => c.charCodeAt(0));
+      const files = new DataTransfer();
+      files.items.add(new File([bytes], 'oferta.jpg', {type: 'image/jpeg'}));
+      pasteData(composer, files);
+      const captionBox = () => [...document.querySelectorAll('[data-testid="media-caption-input-container"] [contenteditable="true"], [data-testid="media-caption-input-container"][contenteditable="true"]')].find(visible);
+      const closeEditor = async () => {
+        const close = [...document.querySelectorAll('button[aria-label="Fechar"], button[aria-label="Close"]')].find(visible);
+        if (close) click(close);
+        for (let end = Date.now() + 4000; Date.now() < end; await sleep(250)) {
+          const discard = [...document.querySelectorAll('button, [role="button"]')].find(b => visible(b) && /^(descartar|discard)$/i.test((b.innerText || '').trim()));
+          if (discard) { click(discard); break; }
+          if (!captionBox()) break;
+        }
+        await sleep(800);
+        await clearField(composer);       // ao descartar, o WhatsApp devolve a legenda para a caixa de mensagem
+      };
+      const caption = await waitFor(captionBox, 20000, '').catch(() => null);
+      if (!caption) {
+        await clearField(composer);
+        return {ok: false, code: 'no_editor', error: 'O WhatsApp não abriu o editor de foto ao colar a imagem. Nada foi enviado.'};
+      }
+      await waitFor(() => document.querySelector('[data-testid="media-editor-canvas"], [data-testid="media-editor-attachment-thumb"]'), 15000, '').catch(() => null);
+      await setText(caption, message);
+      const link = (message.match(/https?:\/\/[^\s]+/) || [])[0];
+      if (link && !textOf(caption).includes(link)) {
+        await closeEditor();
+        return {ok: false, code: 'bad_text', error: 'A legenda não foi colada inteira (o link ficou de fora). Nada foi enviado.'};
+      }
+      if (dryRun) {
+        const result = {ok: true, dryRun: true, preview: 'foto', composer: textOf(caption), probe, before};
+        await closeEditor();
+        return result;
+      }
+      const send = [...document.querySelectorAll('[role="button"][aria-label^="Enviar"], [role="button"][aria-label^="Send"], [data-icon="wds-ic-send-filled"], [data-icon="send"]')]
+        .filter(el => visible(el) && !el.closest('#main footer')).map(el => el.closest('[role="button"], button') || el).pop();
+      if (!send) {
+        await closeEditor();
+        return {ok: false, code: 'no_editor', error: 'Não encontrei o botão de enviar do editor de foto. Nada foi enviado.'};
+      }
+      click(send);
+      // Envio de foto demora mais (upload): espera o editor fechar e a mensagem aparecer na conversa.
+      await waitFor(() => !captionBox(), 30000, '').catch(() => null);
+      const confirmed = await waitFor(() => countWith(probe) > before, 60000, '').then(() => true).catch(() => false);
+      if (captionBox() && !confirmed) {
+        return {ok: false, code: 'unconfirmed', error: 'Cliquei em enviar a foto, mas o WhatsApp não confirmou. Confira no grupo se a mensagem saiu antes de reenviar.'};
+      }
+      return {ok: true, confirmed, preview: 'foto'};
+    }
+
     await setText(composer, message);
     let preview = 'sem link';
     if (/https?:\/\//i.test(message)) {
@@ -238,7 +301,7 @@ async function sendInWhatsApp(group, message, useOpenChat, dryRun = false) {
       // Até 3 tentativas: se o cartão continuar provisório, apaga e cola de novo para o WhatsApp reler o link.
       for (let attempt = 1; attempt <= 3 && preview === 'sem link'; attempt++) {
         if (attempt > 1) {
-          clearField(composer);
+          await clearField(composer);
           await sleep(2500 * attempt);
           await setText(composer, message);
         }
@@ -257,7 +320,7 @@ async function sendInWhatsApp(group, message, useOpenChat, dryRun = false) {
       }
       if (preview === 'sem link') {
         // Sem prévia de verdade: não envia. A publicação volta para a fila e é tentada de novo mais tarde.
-        clearField(composer);
+        await clearField(composer);
         const why = hiddenSeen
           ? ' A tela do WhatsApp ficou oculta durante a espera (Chrome minimizado, computador bloqueado ou tela desligada), e assim o WhatsApp não monta a prévia. Deixe o computador desbloqueado com a tela ligada.'
           : ` O cartão ficou: "${cardText() || previewBox()?.innerText?.trim().slice(0, 60) || 'vazio'}".`;
@@ -269,14 +332,14 @@ async function sendInWhatsApp(group, message, useOpenChat, dryRun = false) {
     if (dryRun) {
       // Validação sem enviar: devolve o que seria enviado e limpa a caixa.
       const result = {ok: true, dryRun: true, preview, composer: textOf(composer), probe, before};
-      clearField(composer);
+      await clearField(composer);
       return result;
     }
     // Confere se a caixa tem a mensagem inteira (com o link) antes de enviar.
     const typed = textOf(composer);
     const linkInMessage = (message.match(/https?:\/\/[^\s]+/) || [])[0];
     if (linkInMessage && !typed.includes(linkInMessage)) {
-      clearField(composer);
+      await clearField(composer);
       return {ok: false, code: 'bad_text', error: 'A mensagem não foi colada inteira na caixa do WhatsApp (o link ficou de fora). Nada foi enviado.'};
     }
     const button = sendButton(footer);

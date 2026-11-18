@@ -16,6 +16,10 @@ class AutomationRule(Base):
     marketplaces: Mapped[str] = mapped_column(Text, default="[]")
     # Modelo da mensagem de oferta; vazio usa o modelo padrão (publications/messages.py).
     message_template: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # Forma de envio padrão das ofertas avulsas (fora de campanha) e a marca d'água da foto.
+    send_mode: Mapped[str] = mapped_column(String(10), default="preview", server_default="preview")
+    watermark_text: Mapped[str] = mapped_column(String(80), default="", server_default="")
+    watermark_handle: Mapped[str] = mapped_column(String(60), default="", server_default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 class AutomationLog(Base):

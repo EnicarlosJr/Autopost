@@ -1,10 +1,10 @@
 """Regras das buscas automáticas: filtros, nota, histórico de preço, agenda e criação das publicações."""
 import json
-import math
 import os
 import re
 import unicodedata
 from datetime import datetime, timedelta, timezone
+from typing import NamedTuple
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 from sqlalchemy import func, select
@@ -15,6 +15,7 @@ from app.models.search import GroupSchedule, Listing, PricePoint, Search
 from app.products.image_fetch import download_product_image
 from app.products.urls import normalize_product_url
 from app.publications.service import as_utc, conflict_reason, offer_text
+from app.searches.ranking import offer_score
 
 SEARCH_LEASE_MINUTES = 10   # tempo que a extensão tem para devolver o resultado de uma busca
 HISTORY_DAYS = 30
@@ -78,25 +79,26 @@ def reject_reason(search: Search, listing: Listing) -> str:
     return ""
 
 
-def score_of(listing: Listing, history_points: int) -> int:
-    """Nota de 0 a 100: desconto, menor preço recente, avaliação, vendas e frete."""
-    score = min(listing.discount_pct or 0, 60) / 60 * 45
-    if listing.rating:
-        score += max(0.0, min(listing.rating, 5) - 3.5) / 1.5 * 20
-    if listing.sold:
-        score += min(math.log10(listing.sold + 1) / 4, 1) * 15
-    if listing.free_shipping:
-        score += 5
-    if history_points >= 3 and listing.min_price_30d is not None and listing.price is not None \
-            and listing.price <= listing.min_price_30d:
-        score += 15
-    return max(0, min(100, round(score)))
+def score_of(listing: Listing, history_points: int, history: "PriceHistory | None" = None) -> int:
+    """Nota de 0 a 100 (regras em app.searches.ranking.offer_score)."""
+    h = history or PriceHistory(listing.min_price_30d, None, history_points, 0)
+    return offer_score(discount_pct=listing.discount_pct, rating=listing.rating, sold=listing.sold,
+                       free_shipping=bool(listing.free_shipping), official_store=bool(listing.official_store),
+                       fulfillment=bool(listing.fulfillment), price=listing.price, history_points=h.points,
+                       min_30d=h.lowest, max_30d=h.highest, history_days=h.days)
 
 
 # ---------------------------------------------------------------- resultados da busca
 
-def _record_price(db: Session, listing: Listing) -> tuple[float | None, int]:
-    """Guarda o preço (sem repetir o mesmo valor na mesma hora) e devolve o menor dos últimos 30 dias."""
+class PriceHistory(NamedTuple):
+    lowest: float | None    # menor preço dos últimos 30 dias
+    highest: float | None   # maior preço dos últimos 30 dias
+    points: int             # leituras guardadas nos últimos 30 dias
+    days: float             # dias entre a primeira e a última leitura
+
+
+def _record_price(db: Session, listing: Listing) -> PriceHistory:
+    """Guarda o preço (sem repetir o mesmo valor na mesma hora) e resume os últimos 30 dias."""
     if listing.price is not None:
         last = db.scalar(select(PricePoint).where(PricePoint.listing_id == listing.id)
                          .order_by(PricePoint.seen_at.desc(), PricePoint.id.desc()).limit(1))
@@ -104,9 +106,12 @@ def _record_price(db: Session, listing: Listing) -> tuple[float | None, int]:
             db.add(PricePoint(listing_id=listing.id, price=listing.price, seen_at=now()))
             db.flush()
     since = now() - timedelta(days=HISTORY_DAYS)
-    lowest, count = db.execute(select(func.min(PricePoint.price), func.count(PricePoint.id))
-                               .where(PricePoint.listing_id == listing.id, PricePoint.seen_at >= since)).one()
-    return lowest, count
+    lowest, highest, count, first, last_seen = db.execute(
+        select(func.min(PricePoint.price), func.max(PricePoint.price), func.count(PricePoint.id),
+               func.min(PricePoint.seen_at), func.max(PricePoint.seen_at))
+        .where(PricePoint.listing_id == listing.id, PricePoint.seen_at >= since)).one()
+    days = (as_utc(last_seen) - as_utc(first)).total_seconds() / 86400 if first and last_seen else 0
+    return PriceHistory(lowest, highest, count, days)
 
 
 def _recently_posted(db: Session, listing: Listing) -> bool:
@@ -157,11 +162,15 @@ def upsert_listing(db: Session, item: dict, *, search_id: int | None = None,
     listing.free_shipping = bool(item.get("free_shipping"))
     listing.official_store = bool(item.get("official_store"))
     listing.fulfillment = bool(item.get("fulfillment"))
+    catalog = str(item.get("catalog_product_id") or "").strip().upper()
+    if re.fullmatch(r"MLB\d+", catalog):
+        listing.catalog_product_id = catalog   # produto de catálogo: lojas diferentes do mesmo produto
     listing.last_seen_at = now()
     db.flush()
-    listing.min_price_30d, points = _record_price(db, listing)
-    listing.score = score_of(listing, points)
-    return listing, created, points
+    history = _record_price(db, listing)
+    listing.min_price_30d = history.lowest
+    listing.score = score_of(listing, history.points, history)
+    return listing, created, history.points
 
 
 def ingest(db: Session, search: Search, items: list[dict]) -> dict:
@@ -313,6 +322,16 @@ def approve(db: Session, listings: list[Listing], *, when: datetime | None = Non
             listing.decided_at = now()
             done.append({"id": listing.id, "publication_id": publication.id, "scheduled_at": slot.isoformat()})
     return {"scheduled": done, "skipped": skipped}
+
+
+def restore(listings: list[Listing]) -> int:
+    """Descartados voltam para "Para aprovar"."""
+    count = 0
+    for listing in listings:
+        if listing.status == "discarded":
+            listing.status, listing.decided_at = "new", None
+            count += 1
+    return count
 
 
 def discard(listings: list[Listing]) -> int:

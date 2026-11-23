@@ -56,6 +56,8 @@ class Listing(Base):
     # Categoria oficial identificada pelo preditor do Mercado Livre (o card da busca não traz a categoria).
     ml_category_id: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
     category_source: Mapped[str] = mapped_column(String(20), default="")
+    # Produto de catálogo do Mercado Livre (/p/MLB...): anúncios de lojas diferentes do mesmo produto.
+    catalog_product_id: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
     min_price_30d: Mapped[float | None] = mapped_column(Numeric(12, 2, asdecimal=False), nullable=True)
     score: Mapped[int] = mapped_column(Integer, default=0, index=True)
     matches: Mapped[bool] = mapped_column(Boolean, default=False)   # passou nos filtros da busca

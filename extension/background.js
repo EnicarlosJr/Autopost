@@ -66,7 +66,7 @@ async function handle(message, sender) {
       const {publication_id: id, group} = message.payload || {};
       const publication = await api(`/publications/${id}`);
       const imageBase64 = publication.send_mode === 'image' ? await apiBase64(`/publications/${id}/image`) : '';
-      return sendToWhatsApp({group: group || publication.group_name, message: publication.message, imageBase64, dryRun: true});
+      return sendToWhatsApp({group: group || publication.group_name, message: publication.outgoing_message || publication.message, imageBase64, dryRun: true});
     }
     case 'config': {
       // O painel informa o endereço da API em uso.

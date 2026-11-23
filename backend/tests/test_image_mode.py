@@ -55,7 +55,7 @@ def test_manual_offers_use_settings_default_and_per_publication_choice(env, monk
     calls = []
     real = social.social_image
     monkeypatch.setattr(social, "best_source", lambda url, pid: _photo())
-    monkeypatch.setattr(social, "social_image", lambda p, t="", h="": (calls.append((t, h)), real(p, t, h))[1])
+    monkeypatch.setattr(social, "social_image", lambda p, t="", h="", *more: (calls.append((t, h)), real(p, t, h, *more))[1])
     settings = client.get("/api/automations/settings").json()
     settings.update(send_mode="image", watermark_text="Base 92", watermark_handle="@base92")
     saved = client.put("/api/automations/settings", json={k: v for k, v in settings.items()

@@ -10,6 +10,9 @@ import {PriceTag} from '../components/Ui';
 import type {Campaign, CampaignConfig, CampaignOptions, CampaignPlan, CampaignProductRow, GroupSet, GroupTarget, OfficialCategory} from '../types/campaign';
 import {dateTime, duration, rhythm, strategyLabel, WEEKDAYS} from '../campaignLabels';
 import {MultiPick, SelectAll} from '../components/Bulk';
+import {SendModeFields} from '../components/Fields';
+import TemplateEditor from '../components/TemplateEditor';
+import type {Settings} from '../types/models';
 import {PageHeader} from '../components/Ui';
 import {SearchIcon} from '../components/Icons';
 import {display, tokens} from '../theme';
@@ -19,7 +22,7 @@ const EMPTY: CampaignConfig = {name: '', niche_ids: [], ml_categories: [], inclu
   include_uncategorized: false, min_discount: 0, groups: [], strategy: 'balanced', total_limit: 20, block_size: 1, interval_minutes: 5,
   interval_max_minutes: 0, start_at: null, start_hour: 8, end_hour: 22, weekdays: [0, 1, 2, 3, 4, 5, 6], daily_limit: 0, pause_every: 0, pause_minutes: 0,
   end_at: null, message_gap_seconds: 20, reuse_days: null, group_daily_limit: 0,
-  send_mode: 'preview', watermark_text: '', watermark_handle: ''};
+  send_mode: 'preview', watermark_text: '', watermark_handle: '', custom_style: false, message_template: ''};
 const PRESETS: [string, Partial<CampaignConfig>][] = [
   ['1 a cada 2 min', {block_size: 1, interval_minutes: 2, interval_max_minutes: 0}],
   ['1 a cada 5 min', {block_size: 1, interval_minutes: 5, interval_max_minutes: 0}],
@@ -62,8 +65,14 @@ export default function CampaignEditor() {
   const [campaignId, setCampaignId] = useState<number | null>(id ? Number(id) : null);
   const [niches, setNiches] = useState<Niche[]>([]), [products, setProducts] = useState<CampaignProductRow[]>([]), [removing, setRemoving] = useState<number[]>([]);
   const [legacy, setLegacy] = useState(false);
-  const [sample, setSample] = useState(''), [sampleError, setSampleError] = useState('');
   const [sets, setSets] = useState<GroupSet[]>([]), [setName, setSetName] = useState('');
+  const [profile, setProfile] = useState<Settings | null>(null);   // padrão do perfil (mensagem e foto)
+  useEffect(() => {
+    api.get<Settings>('/automations/settings').then(r => {
+      setProfile(r.data);
+      if (!id) setConfig(c => ({...c, send_mode: r.data.send_mode || c.send_mode}));   // campanha nova começa com a forma de envio do perfil
+    }).catch(() => {});
+  }, [id]);
   const loadSets = useCallback(() => api.get<GroupSet[]>('/group-sets').then(r => setSets(r.data)).catch(() => {}), []);
   useEffect(() => { loadSets(); }, [loadSets]);
   const pendingProducts = useRef((params.get('products') || '').split(',').map(Number).filter(Boolean));
@@ -213,6 +222,7 @@ export default function CampaignEditor() {
   </Stack>;
 
   const searchStep = campaignId ? <CampaignSearchPanel campaignId={campaignId} onAdded={() => loadProducts(campaignId)}
+    niches={niches.filter(n => config.niche_ids.includes(n.id))}
     defaults={{niche_id: config.niche_ids[0] ?? null, niche_name: niches.find(n => n.id === config.niche_ids[0])?.name ?? '',
       categories: config.ml_categories, keywords: config.include_keywords, exclude_keywords: config.exclude_keywords,
       gender: niches.find(n => config.niche_ids.includes(n.id) && n.gender && n.gender !== 'any')?.gender ?? 'any'}}/>
@@ -324,45 +334,28 @@ export default function CampaignEditor() {
     </Box>
   </Stack>;
 
-  // Prévia da foto padronizada (com a marca d'água digitada, mesmo antes de salvar).
-  useEffect(() => {
-    if (config.send_mode !== 'image' || !campaignId) return;
-    let alive = true, url = '';
-    const t = setTimeout(async () => {
-      try {
-        const r = await api.get(`/campaigns/${campaignId}/sample-image`, {responseType: 'blob', params: {title: config.watermark_text, handle: config.watermark_handle}});
-        url = URL.createObjectURL(r.data);
-        if (alive) { setSample(url); setSampleError(''); }
-      } catch (e) { if (alive) { setSample(''); setSampleError(apiError(e, 'Não foi possível gerar a prévia da foto.')); } }
-    }, 600);
-    return () => { alive = false; clearTimeout(t); if (url) URL.revokeObjectURL(url); };
-  }, [config.send_mode, config.watermark_text, config.watermark_handle, campaignId, products.length]);
-
+  /** Personalizar: começa com o que está no perfil, para editar a partir dele. */
+  const toggleCustom = (custom: boolean) => set(custom ? {custom_style: true,
+    message_template: config.message_template || profile?.message_template || profile?.default_template || '',
+    watermark_text: config.watermark_text || profile?.watermark_text || '', watermark_handle: config.watermark_handle || profile?.watermark_handle || ''}
+    : {custom_style: false});
   const sendModeBox = <Box>
-    <Typography fontWeight={600} mb={1}>Forma de envio</Typography>
-    <ToggleButtonGroup exclusive size="small" value={config.send_mode} onChange={(_, v) => v && set({send_mode: v})}
-      sx={{flexWrap: 'wrap', '& .MuiToggleButton-root': {textTransform: 'none', px: 2}}}>
-      <ToggleButton value="preview">Texto com prévia do link</ToggleButton>
-      <ToggleButton value="image">Foto + texto</ToggleButton>
-    </ToggleButtonGroup>
-    <Typography variant="body2" color="text.secondary" mt={.75}>
-      {config.send_mode === 'image'
-        ? 'Envia a foto do produto em 1080 x 1080 (maior qualidade disponível, sempre do mesmo tamanho) com a mensagem como legenda. O link fica clicável no texto.'
-        : 'Envia só o texto; o WhatsApp monta o cartão com foto e título do link. Use "Ensaiar no WhatsApp" na Fila para conferir se a prévia está aparecendo.'}
-    </Typography>
-    {config.send_mode === 'image' && <Stack direction={{xs: 'column', md: 'row'}} gap={2.5} mt={2} alignItems={{md: 'flex-start'}}>
-      <Stack gap={2} flex={1}>
-        <TextField label="Marca d'água: nome do grupo" value={config.watermark_text} onChange={e => set({watermark_text: e.target.value.slice(0, 60)})}
-          placeholder="Base 92 | Achados e Ofertas" helperText="Vazio = sem faixa de marca d'água."/>
-        <TextField label="Marca d'água: Instagram" value={config.watermark_handle} onChange={e => set({watermark_handle: e.target.value.slice(0, 40)})} placeholder="@base92"/>
-      </Stack>
-      <Box sx={{width: 260, flexShrink: 0}}>
-        {sample ? <Box component="img" src={sample} alt="Prévia da foto enviada" sx={{width: 260, height: 260, borderRadius: 2, border: `1px solid ${tokens.line}`, display: 'block'}}/>
-          : <Box sx={{width: 260, height: 260, borderRadius: 2, border: `1px dashed ${tokens.line}`, display: 'grid', placeItems: 'center', p: 2, textAlign: 'center'}}>
-            <Typography variant="body2" color="text.secondary">{sampleError || (products.length ? 'Gerando a prévia…' : 'Adicione produtos para ver a prévia da foto.')}</Typography></Box>}
-        <Typography variant="caption" display="block" mt={.5}>Prévia com o primeiro produto da campanha.</Typography>
-      </Box>
-    </Stack>}
+    <Typography fontWeight={600} mb={.5}>Mensagem e foto</Typography>
+    <FormControlLabel control={<Switch checked={!config.custom_style} onChange={e => toggleCustom(!e.target.checked)}/>}
+      label="Usar o padrão do perfil (modelo da mensagem e marca d'água)"/>
+    <Typography variant="body2" color="text.secondary" mb={2}>
+      {config.custom_style ? 'Esta campanha usa a própria mensagem e a própria marca d\'água. ' : <>O padrão fica em <Link to="/profile?tab=style">Meu perfil, aba Mensagem e foto</Link>. </>}
+      A identificação de publicidade ({profile?.disclosure_text || '#publi'}) vai sempre, na mensagem e na foto.</Typography>
+    <Typography fontWeight={600} fontSize={14} mb={1}>Forma de envio</Typography>
+    <SendModeFields mode={config.send_mode} onChange={set} fixed={!config.custom_style}
+      text={config.custom_style ? config.watermark_text : profile?.watermark_text || ''}
+      handle={config.custom_style ? config.watermark_handle : profile?.watermark_handle || ''}
+      sampleUrl={campaignId && products.length ? `/campaigns/${campaignId}/sample-image` : null} refreshKey={products.length}
+      sampleNote="Prévia com o primeiro produto da campanha." emptyHint="Adicione produtos para ver a prévia da foto."/>
+    {config.custom_style && <Box mt={2.5}>
+      <Typography fontWeight={600} fontSize={14} mb={1}>Mensagem desta campanha</Typography>
+      <TemplateEditor value={config.message_template} onChange={v => set({message_template: v})} disclosure={profile?.disclosure_text} minRows={10}/>
+    </Box>}
   </Box>;
 
   const rhythmStep = <Stack gap={2.5}>
@@ -417,10 +410,12 @@ export default function CampaignEditor() {
     </Box>
   </Stack>;
 
+  const marks = (config.custom_style ? [config.watermark_text, config.watermark_handle] : [profile?.watermark_text, profile?.watermark_handle]).filter(Boolean) as string[];
   const reviewStep = !plan ? <Typography>Calculando…</Typography> : <Stack gap={2}>
     <Box sx={{display: 'grid', gridTemplateColumns: {xs: '1fr', sm: '180px 1fr'}, rowGap: 1, columnGap: 2, fontSize: 14.5}}>
       {[['Nome', config.name || 'sem nome'],
-        ['Forma de envio', config.send_mode === 'image' ? `Foto + texto${config.watermark_text || config.watermark_handle ? ` (marca d'água: ${[config.watermark_text, config.watermark_handle].filter(Boolean).join(' / ')})` : ''}` : 'Texto com prévia do link'],
+        ['Mensagem e foto', config.custom_style ? 'Personalizadas nesta campanha' : 'Padrão do perfil'],
+        ['Forma de envio', config.send_mode === 'image' ? `Foto + texto${marks.length ? ` (marca d'água: ${marks.join(' / ')})` : ''}` : 'Texto com prévia do link'],
         ['Nichos', niches.filter(n => config.niche_ids.includes(n.id)).map(n => n.name).join(', ') || 'nenhum'],
         ['Categorias oficiais', config.ml_categories.map(c => c.name || c.id).join(', ') || 'qualquer'],
         ['Produtos', products.length ? `${products.length} na campanha, ${plan.selected} usados` : `${plan.matching} encontrados, ${plan.selected} usados`],

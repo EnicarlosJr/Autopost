@@ -47,6 +47,9 @@ class Campaign(Base):
     send_mode: Mapped[str] = mapped_column(String(10), default="preview", server_default="preview")
     watermark_text: Mapped[str] = mapped_column(String(80), default="", server_default="")     # ex.: nome do grupo
     watermark_handle: Mapped[str] = mapped_column(String(60), default="", server_default="")   # ex.: @instagram
+    # Falso = usa o modelo da mensagem e a marca d'água do perfil; verdadeiro = usa os desta campanha.
+    custom_style: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    message_template: Mapped[str] = mapped_column(Text, default="", server_default="")
     # Dono (perfil) e segmentação oficial. Os nichos aplicados são copiados: mudar a campanha não muda o nicho.
     owner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     niche_ids: Mapped[str] = mapped_column(Text, default="[]")

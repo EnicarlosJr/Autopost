@@ -1,14 +1,15 @@
 import {useCallback, useEffect, useState} from 'react';
 import {useSearchParams} from 'react-router-dom';
-import {Alert, Box, Button, Card, Chip, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, LinearProgress, Stack, Tab, Tabs,
+import {Alert, Box, Button, Card, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, LinearProgress, Stack, Tab, Tabs,
   TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography, useMediaQuery} from '@mui/material';
 import {api, apiError} from '../services/api';
 import {syncCategoriesInBrowser} from '../services/sender';
 import type {CatalogStatus, CategoryPick, MlCategory, Niche} from '../types/catalog';
 import CategoryTree, {OfficialChip} from '../components/CategoryTree';
-import {MultiPick, useConfirm} from '../components/Bulk';
+import {BulkBar, MultiPick, SelectAll, eachItem, useConfirm, useSelection} from '../components/Bulk';
 import {Empty, Feedback, Loading} from '../components/Feedback';
 import {PageHeader} from '../components/Ui';
+import StyleSettings from '../components/StyleSettings';
 import {AddIcon, CopyIcon, DeleteIcon, EditIcon, RefreshIcon, TagIcon} from '../components/Icons';
 import {display, tokens} from '../theme';
 
@@ -76,9 +77,11 @@ function NicheDialog({draft, onClose, onSaved}: {draft: Draft | null; onClose: (
   </Dialog>;
 }
 
-function NicheCard({n, onEdit, onAction}: {n: Niche; onEdit: () => void; onAction: (action: 'favorite' | 'duplicate' | 'delete') => void}) {
-  return <Card sx={{p: 2.25, display: 'flex', flexDirection: 'column', gap: 1.25}}>
+function NicheCard({n, selected, onToggle, onEdit, onAction}: {n: Niche; selected: boolean; onToggle: () => void; onEdit: () => void;
+  onAction: (action: 'favorite' | 'duplicate' | 'delete') => void}) {
+  return <Card sx={{p: 2.25, display: 'flex', flexDirection: 'column', gap: 1.25, borderColor: selected ? 'primary.main' : undefined}}>
     <Stack direction="row" alignItems="flex-start" gap={1}>
+      <Checkbox checked={selected} onChange={onToggle} sx={{m: -1}} inputProps={{'aria-label': `Selecionar ${n.name}`}}/>
       <Box flex={1} minWidth={0}>
         <Typography sx={{fontFamily: display, fontWeight: 700, fontSize: 18}}>{n.name}</Typography>
         {n.description && <Typography variant="body2" color="text.secondary">{n.description}</Typography>}
@@ -108,12 +111,12 @@ function NicheCard({n, onEdit, onAction}: {n: Niche; onEdit: () => void; onActio
 
 export default function ProfilePage() {
   const [params, setParams] = useSearchParams();
-  const tab = params.get('tab') === 'categories' ? 'categories' : 'niches';
+  const tab = params.get('tab') === 'categories' ? 'categories' : params.get('tab') === 'style' ? 'style' : 'niches';
   const [niches, setNiches] = useState<Niche[]>([]), [loading, setLoading] = useState(true);
   const [status, setStatus] = useState<CatalogStatus | null>(null), [favorites, setFavorites] = useState<MlCategory[]>([]);
   const [error, setError] = useState(''), [notice, setNotice] = useState(''), [syncing, setSyncing] = useState('');
   const [draft, setDraft] = useState<Draft | null>(null), [treeKey, setTreeKey] = useState(0);
-  const confirm = useConfirm();
+  const confirm = useConfirm(); const sel = useSelection();
   const load = useCallback(async () => {
     try {
       const [n, s, f] = await Promise.all([api.get<Niche[]>('/niches'), api.get<CatalogStatus>('/ml-categories/status'), api.get<MlCategory[]>('/ml-categories/favorites')]);
@@ -146,24 +149,32 @@ export default function ProfilePage() {
       load();
     } catch (e) { setError(apiError(e, 'Ação não concluída.')); }
   };
+  const bulkDelete = async () => {
+    if (!await confirm.ask(`Excluir ${sel.count} nicho(s)?`, 'Campanhas que já usaram estes nichos não mudam: elas guardam uma cópia das configurações.', 'Excluir nichos')) return;
+    setError(''); setNotice('');
+    const r = await eachItem(niches.filter(n => sel.has(n.id)), n => api.delete(`/niches/${n.id}`));
+    setNotice(`${r.ok} nicho(s) excluído(s).${r.failed ? ` ${r.failed} falharam.` : ''}`); sel.clear(); load();
+  };
   const edit = (n: Niche) => setDraft({id: n.id, name: n.name, description: n.description, favorite: n.favorite, categories: n.categories,
     tags: n.tags, include_keywords: n.include_keywords, exclude_keywords: n.exclude_keywords, gender: n.gender ?? 'any'});
   const catalogEmpty = status !== null && status.total === 0;
 
   return <>
-    <PageHeader title="Meu perfil" description="Nichos e categorias favoritas que você reaproveita nas buscas e campanhas."
+    <PageHeader title="Meu perfil" description="Nichos, categorias favoritas e o padrão da mensagem e da foto que você reaproveita nas buscas e campanhas."
       actions={tab === 'niches' ? <Button variant="contained" startIcon={<AddIcon/>} disabled={catalogEmpty} onClick={() => setDraft({...EMPTY})}>Novo nicho</Button> : undefined}/>
     <Tabs value={tab} onChange={(_, v) => setParams(v === 'niches' ? {} : {tab: v})} sx={{mb: 2.5, borderBottom: 1, borderColor: 'divider'}}>
       <Tab value="niches" label={`Nichos${niches.length ? ` (${niches.length})` : ''}`}/>
       <Tab value="categories" label="Categorias do Mercado Livre"/>
+      <Tab value="style" label="Mensagem e foto"/>
     </Tabs>
     <Feedback error={error} notice={notice} onRetry={load} onClose={() => { setError(''); setNotice(''); }}/>
     <Loading show={loading}/>
     {catalogEmpty && <Alert severity="info" sx={{mb: 2}} action={<Button color="inherit" disabled={Boolean(syncing)} onClick={sync}>Atualizar agora</Button>}>
       O catálogo de categorias oficiais ainda não foi carregado. Ele é necessário para criar nichos.</Alert>}
 
+    {tab === 'niches' && !loading && niches.length > 0 && <SelectAll total={niches.length} selected={sel.count} onAll={() => sel.setAll(niches.map(n => n.id))} onNone={sel.clear}/>}
     {tab === 'niches' && !loading && (niches.length ? <Box sx={{display: 'grid', gap: 2, gridTemplateColumns: {xs: '1fr', sm: '1fr 1fr', lg: '1fr 1fr 1fr'}}}>
-      {niches.map(n => <NicheCard key={n.id} n={n} onEdit={() => edit(n)} onAction={k => action(n, k)}/>)}</Box>
+      {niches.map(n => <NicheCard key={n.id} n={n} selected={sel.has(n.id)} onToggle={() => sel.toggle(n.id)} onEdit={() => edit(n)} onAction={k => action(n, k)}/>)}</Box>
       : !catalogEmpty && <Empty text="Nenhum nicho ainda. Crie um nicho com as categorias e palavras-chave que você mais usa, como Informática ou Casa e Decoração."/>)}
 
     {tab === 'categories' && <Box sx={{display: 'grid', gap: 3, gridTemplateColumns: {xs: '1fr', md: '1.4fr 1fr'}, alignItems: 'start'}}>
@@ -189,7 +200,11 @@ export default function ProfilePage() {
         <Button size="small" sx={{mt: 1.5}} onClick={load}>Atualizar lista</Button>
       </Card>
     </Box>}
+    {tab === 'style' && <StyleSettings/>}
     <NicheDialog draft={draft} onClose={() => setDraft(null)} onSaved={t => { setDraft(null); setNotice(t); load(); }}/>
+    {tab === 'niches' && <BulkBar count={sel.count} noun="nicho(s) selecionado(s)" onClear={sel.clear}>
+      <Button size="small" variant="outlined" startIcon={<DeleteIcon/>} onClick={bulkDelete}>Excluir</Button>
+    </BulkBar>}
     {confirm.dialog}
   </>;
 }

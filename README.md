@@ -37,7 +37,7 @@ Depois de atualizar os arquivos da extensão, clique em **Recarregar** no cartã
 
 ## Fluxo do dia a dia
 
-1. **Cadastrar:** na página do produto, clique no raio, cole o link de afiliado, confira o grupo e clique em **Cadastrar e pôr na fila** (ou **Só cadastrar**). Também dá para colar os links em Produtos.
+1. **Cadastrar:** na página do produto, clique no raio, cole o link de afiliado, confira o grupo e clique em **Cadastrar e pôr na fila** (ou **Só cadastrar**). Também dá para colar os links em Produtos. A loja (Mercado Livre, Amazon, Magalu, Shopee) é identificada pelo link.
 2. **Mercado Livre:** a loja bloqueia acessos do servidor, então esses produtos ficam como "Aguardando navegador" e a extensão lê nome, imagem, preço, preço anterior e a condição ("no Pix") pelo seu navegador. Outras lojas são extraídas pelo servidor.
 3. **Fila:** abas Aguardando aprovação, Prontas, Agendadas, Falhas, Enviadas e Canceladas. Com "Exigir aprovação" desligado, as publicações já entram em Prontas.
 4. **Enviar:** em Prontas, **Enviar agora**, **Enviar fila agora** ou ligue o **Envio automático**, que envia mesmo com o painel fechado (precisa do Chrome aberto com o WhatsApp Web). A mensagem vai só como texto, sem foto, colada na conversa como um Ctrl+V. Assim o WhatsApp aplica a formatação do modelo (`*negrito*`, `_itálico_`, `~riscado~`) e monta a prévia do link sozinho.
@@ -57,7 +57,7 @@ Automatizar o WhatsApp Web não é um uso previsto pelo WhatsApp e pode levar a 
 Em **Buscas**, crie buscas salvas para o seu nicho: termos (um por linha), palavras proibidas no título, faixa de preço, desconto mínimo, nota mínima, frete grátis, frequência e grupo de destino.
 
 1. **A extensão busca pelo seu Chrome.** A cada 30 s ela pergunta ao Autopost se alguma busca está na hora, abre a página de resultados numa aba em segundo plano, lê os anúncios (os patrocinados ficam de fora) e devolve. Termos da mesma busca são lidos com pausas de alguns segundos. Se o Mercado Livre pedir verificação, a busca para e o aviso aparece em Buscas.
-2. **Achados.** Cada anúncio recebe uma nota de 0 a 100 (desconto, menor preço dos últimos 30 dias, avaliação, vendas e frete). Os que passam nos filtros aparecem em **Achados**, da melhor nota para a pior. Os demais ficam na aba "Fora dos filtros", com o motivo.
+2. **Achados.** Cada anúncio recebe uma nota de 0 a 100: desconto (vale metade se o preço ficou parado por dias, sinal de "de/por" inflado), nota ponderada pelas vendas (um 5,0 com poucas vendas vale menos que um 4,8 com milhares), vendas, menor preço dos últimos 30 dias, loja oficial, Full e frete grátis. Os que passam nos filtros aparecem em **Achados**, da melhor nota para a pior. Os demais ficam na aba "Fora dos filtros", com o motivo.
 3. **Aprovar.** Escolha um horário ou deixe o sistema distribuir nos próximos horários livres do grupo. **Aceitar todos** aprova a lista inteira de uma vez. Descartados não voltam a aparecer.
 4. **Modo automático.** Na busca, escolha "Agendar automaticamente os melhores": a cada execução, os melhores achados (até o limite definido) são agendados sem passar pela sua aprovação.
 5. **Agenda dos grupos.** Em Buscas, defina por grupo o horário de postagem, o máximo por dia, o intervalo entre posts e depois de quantos dias o mesmo produto pode voltar.
@@ -79,6 +79,12 @@ Em **Campanhas > Nova campanha**, um assistente em sete etapas monta a divulgaç
 1. **Informações:** nome da campanha. Ao avançar, ela é salva como rascunho para receber buscas e produtos.
 2. **Nichos e categorias:** aplique nichos salvos em **Meu perfil** (as categorias e palavras são copiadas para a campanha; editar aqui não altera o nicho), ajuste as categorias oficiais do Mercado Livre na árvore e as palavras-chave e palavras excluídas.
 3. **Busca de produtos:** "Buscar produtos" cria uma busca da campanha que a extensão executa no seu Chrome. Cada resultado é classificado na categoria oficial e filtrado pelas categorias, palavras excluídas, preço, desconto, nota e frete grátis. O histórico mostra cada busca (na fila, buscando, concluída, sem resultados, falhou) com "Ver resultados", "Repetir" e "Usar parâmetros". Nos resultados, selecione e clique em "Adicionar à campanha"; "Mostrar fora dos filtros" exibe o motivo de cada recusa. Em **Público** (Todos, Masculino ou Feminino), cada palavra é buscada com "masculino" ou "feminino" e anúncios do outro público ficam de fora (unissex continua valendo); o modo estrito aceita só anúncios que dizem o público no título. O nicho também guarda o público e o aplica na busca. Em **Confiabilidade**, "Básica" (padrão) exige pelo menos 50 vendidos, nota 4 ou mais e descarta títulos com termos como "banhado", "réplica" ou "1ª linha"; "Alta" exige 500 vendidos, nota 4,5 e só aceita loja oficial ou Full. Os resultados mostram os selos "Loja oficial" e "Full".
+
+   **Parecidos agrupados.** O mesmo produto vendido por lojas diferentes, em outra cor ou com título quase igual vira um grupo: aparece só o melhor (maior nota, com preferência pelo mais barato), com "+N parecidos" para abrir o grupo e o selo "Menor preço entre os parecidos". O agrupamento usa o produto de catálogo do Mercado Livre quando a página informa e, além disso, as palavras do título, a categoria e o preço. Medidas diferentes ("480 GB" x "1 TB"), modelos diferentes e públicos diferentes (masculino x feminino) nunca se juntam. Anúncios parecidos com algo que já está na campanha recebem o aviso "Parecido com um já na campanha". O interruptor "Agrupar parecidos" mostra a lista completa.
+
+   **Escolher os melhores.** Informe quantos e clique em "Escolher os melhores": o sistema marca um por grupo de parecidos, pula o que já está na campanha (ou é parecido com algo dela) e varia categoria (cerca de 40% no máximo por categoria quando há várias) e loja (até 2 por loja). Se esses limites impedirem de chegar ao número pedido, ele completa sem eles. Nada é adicionado sozinho: confira e clique em "Adicionar à campanha".
+   **Buscar em todos os nichos.** Com vários nichos aplicados na etapa 2, o botão "Buscar em todos os nichos" cria uma busca para cada nicho, cada uma com as palavras, categorias, exclusões e o público do próprio nicho (um nicho masculino busca "masculino"; um de ferramentas, não). Os filtros de preço, desconto e confiabilidade da tela valem para todas. Nicho com mais de 10 palavras vira mais de uma busca. Os chips dos nichos também preenchem a busca com um nicho só.
+
 4. **Seleção dos produtos:** lista os produtos da campanha, com remoção em massa. Também dá para trazer produtos da tela **Produtos** ("Adicionar a uma campanha").
 5. **Grupos de destino:** aplique um conjunto de grupos com um clique (ou salve a seleção como conjunto), defina o limite por grupo e a estratégia:
    - *Equilibrada:* cada produto vai para um grupo, alternando;
@@ -108,9 +114,13 @@ Os achados aprovados recebem a categoria oficial identificada pelo Mercado Livre
 Cada campanha escolhe, em **Regras de automação > Forma de envio**:
 
 - **Texto com prévia do link:** envia só o texto; o WhatsApp monta o cartão com foto e título do link.
-- **Foto + texto:** envia a foto do produto com a mensagem como legenda. A foto vem na maior qualidade que o Mercado Livre oferece, tem as bordas brancas cortadas e é padronizada em 1080 x 1080, então todas ficam do mesmo tamanho. Opcionalmente, uma faixa no rodapé com o nome do grupo e o Instagram (marca d'água). A tela mostra a prévia da foto com o primeiro produto da campanha.
+- **Foto + texto:** envia a foto do produto com a mensagem como legenda. A foto vem na maior qualidade que o Mercado Livre oferece, tem as bordas brancas cortadas e é padronizada em 1080 x 1080, então todas ficam do mesmo tamanho. Ela leva o selo **#publi** no canto superior esquerdo, o selo de desconto ("-30% OFF") no canto superior direito quando o produto tem preço anterior, e a faixa no rodapé com o nome do grupo e o Instagram (marca d'água).
 
-As **ofertas avulsas** (fora de campanha: aprovadas em Achados, criadas na Fila ou geradas pelos Produtos) usam a forma de envio e a marca d'água definidas em **Configurações > Forma de envio das ofertas avulsas**. Para trocar só uma publicação, use **Editar** na Fila e escolha a forma de envio (Padrão, Texto com prévia do link ou Foto + texto).
+**Padrão do perfil e personalização.** Em **Meu perfil > Mensagem e foto** ficam o modelo da mensagem, a identificação de publicidade, a marca d'água, o selo de desconto e a forma de envio das ofertas avulsas. Cada campanha usa esse padrão, a menos que você desligue **Usar o padrão do perfil** em **Regras de automação > Mensagem e foto** e defina a mensagem e a marca d'água só daquela campanha (elas começam com o que está no perfil).
+
+**#publi.** O programa de afiliados pede que o afiliado se identifique. A identificação (padrão "#publi"; pode ser, por exemplo, "#publi | link de afiliado", mas precisa ter #publi) vai na primeira linha de toda mensagem e no selo da foto. Ela não fica guardada no texto da publicação: é acrescentada no envio, então editar a mensagem à mão não a remove, e campanha nenhuma consegue tirá-la. A prévia da Fila mostra o texto exatamente como sai.
+
+As **ofertas avulsas** (fora de campanha: aprovadas em Achados, criadas na Fila ou geradas pelos Produtos) usam a forma de envio e a marca d'água do perfil. Para trocar só uma publicação, use **Editar** na Fila e escolha a forma de envio (Padrão, Texto com prévia do link ou Foto + texto).
 
 Para conferir antes, use **Ensaiar no WhatsApp** na **Fila**: a extensão abre o grupo, cola a mensagem (ou a foto com legenda), confere e apaga, sem enviar nada.
 
@@ -126,9 +136,27 @@ Em **Grupos**, cadastre os grupos pelo nome exato do WhatsApp, defina as categor
 
 **Conjuntos de grupos:** selecione grupos na lista e use "Salvar como conjunto" (ex.: "Floripa"). Na campanha, um clique no conjunto adiciona todos os grupos dele. Cada perfil tem os próprios conjuntos.
 
+## Ações em massa
+
+Todas as listas têm caixa de seleção, "Selecionar todos" e uma barra de ações que aparece no rodapé enquanto há itens marcados. Com a página inteira marcada, um aviso oferece "Selecionar todos os N" para agir sobre o filtro inteiro (todas as páginas).
+
+| Tela | Ações em massa |
+| --- | --- |
+| Produtos | Adicionar a uma campanha, alterar categoria, tags, excluir |
+| Fila | Aprovar ou liberar para reenviar, remover da fila e, nas abas Falhas e Canceladas, excluir de vez. Enviadas não são excluídas: contam para o prazo de repostagem |
+| Achados | Aprovar e descartar (Para aprovar), descartar (Fora dos filtros), restaurar (Descartados) |
+| Buscas | Ativar, pausar, excluir |
+| Campanhas | Pausar, retomar, cancelar e excluir (cada uma só onde a campanha permite) |
+| Grupos | Salvar como conjunto, ativar, desativar, remover do cadastro |
+| Meu perfil | Excluir nichos |
+| Busca da campanha | Excluir buscas do histórico (os produtos já adicionados ficam) |
+| Configurações | Limpar o histórico do worker |
+
+Toda exclusão pede confirmação dizendo o que acontece.
+
 ## Modelo da mensagem
 
-Em **Configurações**, edite o texto da oferta com variáveis e veja a prévia ao vivo. Variáveis de linha (a linha some se faltar o dado): `{titulo}`, `{preco_de}`, `{preco_por}`, `{link}`, `{loja}`, `{categoria}`. Variáveis opcionais (somem sem apagar a linha): `{condicao}` (" no Pix"), `{desconto}` (" (44% OFF)"), `{desconto_pct}` ("44"). **Restaurar modelo padrão** volta ao texto original.
+Em **Meu perfil > Mensagem e foto** (ou na campanha, se ela personalizar), edite o texto da oferta com variáveis e veja a prévia ao vivo, já com o #publi no topo. Há modelos prontos: Padrão (nome em negrito, "De" riscado, preço em destaque e o aviso "Preço e estoque podem mudar a qualquer momento"), Direto ao ponto, Desconto em destaque e Com a loja. Variáveis de linha (a linha some se faltar o dado): `{titulo}`, `{preco_de}`, `{preco_por}`, `{link}`, `{loja}`, `{categoria}`. Variáveis opcionais (somem sem apagar a linha): `{condicao}` (" no Pix"), `{desconto}` (" (44% OFF)"), `{desconto_pct}` ("44"). **Restaurar modelo padrão** volta ao texto original.
 
 ## Testes
 
@@ -140,6 +168,6 @@ pytest tests_e2e                            # extensão: leitura de preço, busc
 
 ## API
 
-REST em `/api`: `products` (inclui `/from-browser` e `/{id}/browser-data`), `publications` (inclui `/queue`, `/summary`, `/bulk/approve`, `/{id}/claim`, `/{id}/sent`, `/{id}/failed`), `automations/settings`, `searches` (inclui `/due`, `/{id}/run`, `/{id}/results`), `listings` (inclui `/approve`, `/accept-all`, `/discard`), `group-schedules`, `ml-categories` (inclui `/children`, `/search`, `/favorites`, `/sync`, `/import`), `niches`, `campaigns` (inclui `/options`, `/preview`, `/{id}/confirm`, `/pause`, `/resume`, `/cancel`, `/duplicate`), `automations/template-preview`, `automations/logs`, `auth/login`, `auth/password`. Listas aceitam `limit` e `offset` e devolvem o total no cabeçalho `X-Total-Count`.
+REST em `/api`: `products` (inclui `/from-browser` e `/{id}/browser-data`), `publications` (inclui `/queue`, `/summary`, `/bulk/approve`, `/{id}/claim`, `/{id}/sent`, `/{id}/failed`), `automations/settings`, `searches` (inclui `/due`, `/{id}/run`, `/{id}/results`), `listings` (inclui `/approve`, `/accept-all`, `/discard`), `group-schedules`, `ml-categories` (inclui `/children`, `/search`, `/favorites`, `/sync`, `/import`), `niches`, `campaigns` (inclui `/options`, `/preview`, `/{id}/confirm`, `/pause`, `/resume`, `/cancel`, `/duplicate`, `/{id}/searches/{sid}/best`, `/{id}/searches/remove`), `publications/bulk/delete`, `listings/restore`, `DELETE automations/logs`, `automations/template-preview`, `automations/logs`, `auth/login`, `auth/password`. Listas aceitam `limit` e `offset` e devolvem o total no cabeçalho `X-Total-Count`.
 
 Após 5 senhas erradas em 15 minutos para o mesmo e-mail e IP, o login fica bloqueado temporariamente. Tokens de usuários desativados deixam de valer na hora.

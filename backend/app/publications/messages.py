@@ -3,17 +3,16 @@ import re
 
 from app.models.product import Product
 
-DEFAULT_TEMPLATE = """🔥 OFERTA IMPERDÍVEL! 🔥
+# Nome em negrito, "De" riscado, preço em destaque e o aviso de que preço e estoque mudam.
+# O #publi não entra aqui: ele é acrescentado no envio (messages.with_disclosure) e não pode ser removido.
+DEFAULT_TEMPLATE = """🔥 *{titulo}*
 
-Olha essa oportunidade que encontramos! 👀
-Preço especial por tempo limitado. Aproveite antes que acabe! 🛒
+❌ De ~R$ {preco_de}~
+💸 Por *R$ {preco_por}*{condicao}{desconto}
 
-👇 Confira aqui:
+🛒 Compre aqui: {link}
 
-❌ De R$ {preco_de}
-💸 Por R$ {preco_por}{condicao}{desconto}
-
-🛒 Compre aqui: {link}"""
+_Preço e estoque podem mudar a qualquer momento._"""
 
 # Variáveis obrigatórias na linha: se o produto não tiver o dado, a linha inteira some.
 LINE_VARIABLES = {
@@ -83,6 +82,26 @@ def render_template(template: str, product: Product) -> str:
 def standard_offer_text(product: Product, template: str | None = None) -> str:
     """Monta a mensagem de oferta com o modelo configurado (ou o padrão)."""
     return render_template(template.strip() if template and template.strip() else DEFAULT_TEMPLATE, product)
+
+
+DISCLOSURE_DEFAULT = "#publi"
+
+
+def clean_disclosure(text: str | None) -> str:
+    """Identificação de publicidade; nunca fica vazia."""
+    text = " ".join((text or "").split())[:40]
+    return text or DISCLOSURE_DEFAULT
+
+
+def with_disclosure(message: str, disclosure: str | None) -> str:
+    """Texto que vai para o grupo: a identificação de publicidade na primeira linha, sempre.
+    Ela não fica guardada na publicação, então editar o texto à mão não a remove."""
+    tag = clean_disclosure(disclosure)
+    body = (message or "").strip()
+    first = next((line.strip() for line in body.splitlines() if line.strip()), "")
+    if first.casefold().startswith(tag.casefold()):
+        return body
+    return f"{tag}\n\n{body}" if body else tag
 
 
 def normalize_offer_text(message: str) -> str:

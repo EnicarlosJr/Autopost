@@ -3,7 +3,7 @@ import json
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import func, select
+from sqlalchemy import delete as sql_delete, func, select, update
 from sqlalchemy.orm import Session
 from app.core.deps import require_user
 from app.database.session import get_db
@@ -17,6 +17,7 @@ from app.models.publication import Publication
 from app.models.search import GroupSchedule, Search
 from app.campaigns import service
 from app.campaigns.service import clean_list, jload, tags_of
+from app.searches import ranking
 from app.searches.service import search_url
 
 router = APIRouter(prefix="/api/campaigns", tags=["campaigns"])
@@ -72,6 +73,17 @@ class CampaignWrite(BaseModel):
     send_mode: str = Field(default="preview", pattern="^(preview|image)$")
     watermark_text: str = Field(default="", max_length=80)
     watermark_handle: str = Field(default="", max_length=60)
+    custom_style: bool = False                                 # falso = modelo e marca d'água do perfil
+    message_template: str = Field(default="", max_length=4000)  # vazio = modelo do perfil
+
+    @field_validator("message_template")
+    @classmethod
+    def _template(cls, value: str) -> str:
+        from app.publications.messages import unknown_variables
+        unknown = unknown_variables(value)
+        if unknown:
+            raise ValueError("Variáveis desconhecidas no modelo: " + ", ".join("{" + u + "}" for u in unknown))
+        return value.strip()
 
     @field_validator("weekdays")
     @classmethod
@@ -97,7 +109,8 @@ def _read(db: Session, c: Campaign) -> dict:
     data = {name: getattr(c, name) for name in ("id", "name", "status", "tag_mode", "include_uncategorized", "min_discount",
             "strategy", "total_limit", "block_size", "interval_minutes", "interval_max_minutes", "start_at", "start_hour",
             "end_hour", "daily_limit", "pause_every", "pause_minutes", "created_at", "confirmed_at", "end_at",
-            "message_gap_seconds", "reuse_days", "group_daily_limit", "send_mode", "watermark_text", "watermark_handle")}
+            "message_gap_seconds", "reuse_days", "group_daily_limit", "send_mode", "watermark_text", "watermark_handle",
+            "custom_style", "message_template")}
     data.update({name: jload(getattr(c, name)) for name in LISTS})
     data.update({
         "display_status": service.display_status(c, counts),
@@ -280,7 +293,15 @@ def sample_image(campaign_id: int, product_id: int | None = None, title: str | N
     if not product:
         raise HTTPException(404, "Adicione um produto à campanha para ver a imagem.")
     try:
-        data = social_image(product, c.watermark_text if title is None else title, c.watermark_handle if handle is None else handle)
+        from app.publications.messages import clean_disclosure, discount_percent
+        from app.publications.service import main_rule
+        rule = main_rule(db)
+        marks = c if c.custom_style else rule
+        show = True if rule is None or rule.show_discount is None else bool(rule.show_discount)
+        data = social_image(product, (getattr(marks, "watermark_text", "") or "") if title is None else title,
+                            (getattr(marks, "watermark_handle", "") or "") if handle is None else handle,
+                            clean_disclosure(rule.disclosure_text if rule else ""),
+                            discount_percent(product.price, product.original_price) if show else None)
     except ValueError as exc:
         raise HTTPException(422, str(exc))
     return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
@@ -344,6 +365,7 @@ class ResultItem(BaseModel):
     sold: int | None = Field(default=None, ge=0)
     free_shipping: bool = False
     ml_category_id: str | None = Field(default=None, max_length=20)
+    catalog_product_id: str | None = Field(default=None, max_length=20)   # /p/MLB...: mesmo produto em várias lojas
     official_store: bool = False
     fulfillment: bool = False
 
@@ -408,6 +430,66 @@ def create_search(campaign_id: int, data: SearchCreate, db: Session = Depends(ge
     return _search_read(s)
 
 
+class NicheSearches(BaseModel):
+    niche_ids: list[int] = Field(min_length=1, max_length=30)
+    filters: SearchFilters = Field(default_factory=SearchFilters)   # o público de cada busca vem do nicho
+
+
+@router.post("/{campaign_id}/searches/by-niches", status_code=201)
+def create_searches_by_niche(campaign_id: int, data: NicheSearches, db: Session = Depends(get_db), user: User = Depends(require_user)):
+    """Uma busca para cada nicho, cada uma com as categorias, palavras, exclusões e público do próprio nicho.
+    Nicho com mais de 10 palavras vira mais de uma busca (a extensão lê até 10 termos por busca)."""
+    c = _get(db, campaign_id, user)
+    if c.status == "cancelled":
+        raise HTTPException(409, "Campanha cancelada. Duplique a campanha para buscar de novo.")
+    niches = {n.id: n for n in db.scalars(select(Niche).where(Niche.id.in_(data.niche_ids), Niche.owner_id == user.id))}
+    created, skipped = [], []
+    for nid in dict.fromkeys(data.niche_ids):
+        n = niches.get(nid)
+        if n is None:
+            continue
+        links = list(db.scalars(select(NicheCategory).where(NicheCategory.niche_id == n.id)))
+        cats = {m.id: m for m in db.scalars(select(MlCategory).where(MlCategory.id.in_([l.category_id for l in links])))} if links else {}
+        categories = json.dumps([{"id": l.category_id, "include_children": l.include_children, "name": cats[l.category_id].name,
+                                  "path": cats[l.category_id].path_names} for l in links if l.category_id in cats], ensure_ascii=False)
+        keywords = clean_list(jload(n.include_keywords))
+        if not keywords and not cats:
+            skipped.append(n.name)
+            continue
+        filters = data.filters.model_copy(update={"gender": n.gender if n.gender in ("male", "female") else "any"})
+        size = search_service.MAX_TERMS
+        for chunk in ([keywords[i:i + size] for i in range(0, len(keywords), size)] or [[]]):
+            s = CampaignSearch(campaign_id=c.id, niche_id=n.id, niche_name=n.name, categories=categories,
+                               keywords=json.dumps(chunk, ensure_ascii=False),
+                               exclude_keywords=json.dumps(clean_list(jload(n.exclude_keywords)), ensure_ascii=False),
+                               filters=filters.model_dump_json(), status="queued")
+            db.add(s); created.append(s)
+    db.commit()
+    for s in created:
+        db.refresh(s)
+    return {"searches": [_search_read(s) for s in created], "skipped": skipped}
+
+
+class SearchIds(BaseModel):
+    ids: list[int] = Field(min_length=1, max_length=200)
+
+
+@router.post("/{campaign_id}/searches/remove")
+def remove_searches(campaign_id: int, data: SearchIds, db: Session = Depends(get_db), user: User = Depends(require_user)):
+    """Apaga buscas do histórico da campanha (e os resultados delas). Produtos já adicionados continuam na campanha."""
+    _get(db, campaign_id, user)
+    rows = list(db.scalars(select(CampaignSearch).where(CampaignSearch.campaign_id == campaign_id, CampaignSearch.id.in_(data.ids))))
+    gone = [s for s in rows if s.status != "running"]
+    ids = [s.id for s in gone]
+    if ids:
+        db.execute(sql_delete(CampaignSearchResult).where(CampaignSearchResult.search_id.in_(ids)))
+        db.execute(update(CampaignProduct).where(CampaignProduct.search_id.in_(ids)).values(search_id=None))
+        for s in gone:
+            db.delete(s)
+    db.commit()
+    return {"deleted": len(gone), "skipped": len(data.ids) - len(gone)}
+
+
 @router.post("/{campaign_id}/searches/{search_id}/repeat", status_code=201)
 def repeat_search(campaign_id: int, search_id: int, db: Session = Depends(get_db), user: User = Depends(require_user)):
     old = _search(db, search_id, user)
@@ -419,23 +501,65 @@ def repeat_search(campaign_id: int, search_id: int, db: Session = Depends(get_db
     return _search_read(s)
 
 
+def _grouping(db: Session, s: CampaignSearch, rows: list) -> tuple[dict[int, "ranking.GroupInfo"], list["ranking.Offer"]]:
+    """Agrupa os resultados nos filtros com os produtos que já estão na campanha (ids negativos)."""
+    urls = search_service.in_campaign_urls(db, s.campaign_id)
+    offers = [ranking.Offer(l.id, l.title, l.price, l.ml_category_id, l.catalog_product_id, l.seller, l.score,
+                            eligible=True, taken=search_service.listing_in_campaign(l, urls)) for r, l in rows if r.matched]
+    products = db.scalars(select(Product).join(CampaignProduct, CampaignProduct.product_id == Product.id)
+                          .where(CampaignProduct.campaign_id == s.campaign_id))
+    offers += [ranking.Offer(-p.id, p.title, p.price, p.ml_category_id, eligible=False, taken=True) for p in products]
+    return ranking.group_offers(offers), offers
+
+
 @router.get("/{campaign_id}/searches/{search_id}/results")
 def search_results(campaign_id: int, search_id: int, matched: str = "true", db: Session = Depends(get_db), user: User = Depends(require_user)):
+    """Resultados da busca, com os parecidos agrupados: o melhor de cada grupo vem primeiro e os outros logo depois."""
     s = _search(db, search_id, user)
-    stmt = select(CampaignSearchResult, Listing).join(Listing, Listing.id == CampaignSearchResult.listing_id) \
-        .where(CampaignSearchResult.search_id == s.id)
+    rows = db.execute(select(CampaignSearchResult, Listing).join(Listing, Listing.id == CampaignSearchResult.listing_id)
+                      .where(CampaignSearchResult.search_id == s.id)).all()
+    groups, _ = _grouping(db, s, rows)
+    rows.sort(key=lambda rl: (not rl[0].matched, groups[rl[1].id].order if rl[1].id in groups else 0, -rl[1].score, rl[1].id))
     if matched in ("true", "false"):
-        stmt = stmt.where(CampaignSearchResult.matched.is_(matched == "true"))
-    rows = db.execute(stmt.order_by(Listing.score.desc(), Listing.id)).all()
+        rows = [(r, l) for r, l in rows if r.matched == (matched == "true")]
     cats = {m.id: m for m in db.scalars(select(MlCategory).where(MlCategory.id.in_({l.ml_category_id for _, l in rows if l.ml_category_id})))}
     urls = search_service.in_campaign_urls(db, s.campaign_id)
-    return [{"listing_id": l.id, "external_id": l.external_id, "title": l.title, "url": l.url, "image_url": l.image_url,
-             "price": l.price, "original_price": l.original_price, "price_note": l.price_note, "discount_pct": l.discount_pct,
-             "rating": l.rating, "sold": l.sold, "free_shipping": l.free_shipping, "score": l.score, "term": l.term,
-             "ml_category_id": l.ml_category_id, "category_name": cats[l.ml_category_id].name if l.ml_category_id in cats else "",
-             "category_path": cats[l.ml_category_id].path_names if l.ml_category_id in cats else "",
-             "matched": r.matched, "reason": r.reason, "in_campaign": search_service.listing_in_campaign(l, urls),
-             "official_store": bool(l.official_store), "fulfillment": bool(l.fulfillment)} for r, l in rows]
+    out = []
+    for r, l in rows:
+        g = groups.get(l.id)
+        in_campaign = search_service.listing_in_campaign(l, urls)
+        out.append({"listing_id": l.id, "external_id": l.external_id, "title": l.title, "url": l.url, "image_url": l.image_url,
+                    "price": l.price, "original_price": l.original_price, "price_note": l.price_note, "discount_pct": l.discount_pct,
+                    "rating": l.rating, "sold": l.sold, "free_shipping": l.free_shipping, "score": l.score, "term": l.term,
+                    "ml_category_id": l.ml_category_id, "category_name": cats[l.ml_category_id].name if l.ml_category_id in cats else "",
+                    "category_path": cats[l.ml_category_id].path_names if l.ml_category_id in cats else "",
+                    "matched": r.matched, "reason": r.reason, "in_campaign": in_campaign,
+                    "official_store": bool(l.official_store), "fulfillment": bool(l.fulfillment), "seller": l.seller,
+                    # Agrupamento de parecidos (só para os que passaram nos filtros).
+                    "group_key": g.key if g else l.id, "group_size": g.size if g else 1, "group_best": g.best if g else True,
+                    "cheapest": g.cheapest if g else False, "similar_in_campaign": bool(g and g.taken and not in_campaign)})
+    return out
+
+
+class BestPick(BaseModel):
+    count: int = Field(default=10, ge=1, le=200)
+    per_category: int = Field(default=0, ge=0, le=200)    # 0 = automático
+    per_seller: int = Field(default=2, ge=0, le=200)      # 0 = sem limite
+
+
+@router.post("/{campaign_id}/searches/{search_id}/best")
+def best_results(campaign_id: int, search_id: int, data: BestPick, db: Session = Depends(get_db), user: User = Depends(require_user)):
+    """Sugere os melhores: um por grupo de parecidos, sem repetir o que já está na campanha, variando categoria e loja.
+    Só sugere: a escolha volta marcada na tela e o usuário confirma em "Adicionar à campanha"."""
+    s = _search(db, search_id, user)
+    if s.campaign_id != campaign_id:
+        raise HTTPException(404, "Busca não encontrada")
+    rows = db.execute(select(CampaignSearchResult, Listing).join(Listing, Listing.id == CampaignSearchResult.listing_id)
+                      .where(CampaignSearchResult.search_id == s.id, CampaignSearchResult.matched.is_(True))).all()
+    groups, offers = _grouping(db, s, rows)
+    ids = ranking.pick_best(offers, groups, data.count, per_category=data.per_category, per_seller=data.per_seller)
+    available = sum(1 for o in offers if o.id > 0 and groups[o.id].best and not groups[o.id].taken)
+    return {"listing_ids": ids, "available": available, "groups": len({g.key for k, g in groups.items() if k > 0})}
 
 
 @router.get("/{campaign_id}/products")

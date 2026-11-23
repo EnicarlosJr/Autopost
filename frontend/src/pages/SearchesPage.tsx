@@ -1,12 +1,15 @@
 import {useCallback, useEffect, useState} from 'react';
 import {Link} from 'react-router-dom';
-import {Alert, Box, Button, Card, CardContent, Chip, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, Grid, MenuItem, Stack, Switch, TextField, Typography} from '@mui/material';
+import {Alert, Box, Button, Card, CardContent, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, Grid, MenuItem, Stack, Switch, TextField, Typography} from '@mui/material';
 import {api, apiError} from '../services/api';
 import {extensionStatus, runSearches} from '../services/sender';
-import type {GroupSchedule, Search} from '../types/search';
+import type {Search} from '../types/search';
 import {timeAgo} from '../labels';
 import {Empty, Feedback, Loading} from '../components/Feedback';
 import {Meta, PageHeader} from '../components/Ui';
+import {BulkBar, SelectAll, eachItem, useConfirm, useSelection} from '../components/Bulk';
+import {GroupPicker} from '../components/Fields';
+import {DeleteIcon} from '../components/Icons';
 
 type Draft = Omit<Search, 'id' | 'last_run_at' | 'next_run_at' | 'last_result' | 'pending'> & {id?: number};
 const EMPTY: Draft = {name: '', terms: '', exclude_terms: 'usado\nrecondicionado\nréplica', min_price: null, max_price: null, min_discount: 20,
@@ -16,7 +19,7 @@ const INTERVALS: [number, string][] = [[30, 'a cada 30 min'], [60, 'a cada 1 hor
 const num = (value: string) => value.trim() === '' ? null : Number(value.replace(',', '.'));
 const when = (iso: string | null) => iso ? new Date(iso).toLocaleString('pt-BR', {dateStyle: 'short', timeStyle: 'short'}) : '';
 
-function SearchDialog({draft, groups, onClose, onSaved, onError}: {draft: Draft | null; groups: string[]; onClose: () => void;
+function SearchDialog({draft, onClose, onSaved, onError}: {draft: Draft | null; onClose: () => void;
   onSaved: (text: string) => void; onError: (text: string) => void}) {
   const [value, setValue] = useState<Draft | null>(draft), [busy, setBusy] = useState(false);
   useEffect(() => setValue(draft), [draft]);
@@ -35,9 +38,7 @@ function SearchDialog({draft, groups, onClose, onSaved, onError}: {draft: Draft 
     <DialogTitle>{value.id ? 'Editar busca' : 'Nova busca'}</DialogTitle>
     <DialogContent><Grid container spacing={2} sx={{pt: 1}}>
       <Grid item xs={12} md={6}><TextField fullWidth label="Nome (nicho)" placeholder="Ferramentas" value={value.name} onChange={e => set({name: e.target.value})}/></Grid>
-      <Grid item xs={12} md={6}><TextField fullWidth label="Grupo do WhatsApp (nome exato)" value={value.group_name}
-        onChange={e => set({group_name: e.target.value})} inputProps={{list: 'autopost-groups'}}/>
-        <datalist id="autopost-groups">{groups.map(g => <option key={g} value={g}/>)}</datalist></Grid>
+      <Grid item xs={12} md={6}><GroupPicker value={value.group_name} onChange={v => set({group_name: v})} label="Grupo de destino"/></Grid>
       <Grid item xs={12} md={6}><TextField fullWidth multiline minRows={4} label="Termos de busca (um por linha, até 10)"
         placeholder={'lanterna tática\nparafusadeira\nkit chaves'} value={value.terms} onChange={e => set({terms: e.target.value})}/></Grid>
       <Grid item xs={12} md={6}><TextField fullWidth multiline minRows={4} label="Palavras proibidas no título (uma por linha)"
@@ -68,13 +69,13 @@ function SearchDialog({draft, groups, onClose, onSaved, onError}: {draft: Draft 
 }
 
 export default function SearchesPage() {
-  const [searches, setSearches] = useState<Search[]>([]), [schedules, setSchedules] = useState<GroupSchedule[]>([]);
+  const [searches, setSearches] = useState<Search[]>([]);
+  const sel = useSelection(); const confirm = useConfirm();
   const [loading, setLoading] = useState(true), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [draft, setDraft] = useState<Draft | null>(null), [running, setRunning] = useState(false), [extension, setExtension] = useState<boolean | null>(null);
   const load = useCallback(async () => {
     try {
-      const [s, g] = await Promise.all([api.get<Search[]>('/searches'), api.get<GroupSchedule[]>('/group-schedules')]);
-      setSearches(s.data); setSchedules(g.data); setError('');
+      setSearches((await api.get<Search[]>('/searches')).data); setError('');
     } catch (e) { setError(apiError(e, 'Não foi possível carregar as buscas.')); }
     finally { setLoading(false); }
   }, []);
@@ -89,17 +90,27 @@ export default function SearchesPage() {
     } catch (e) { setError(apiError(e, 'Não foi possível rodar a busca.')); }
     finally { setRunning(false); load(); }
   };
-  const toggle = async (search: Search) => {
+  const setActive = (search: Search, active: boolean) => {
     const {id, last_run_at, next_run_at, last_result, pending, ...body} = search; // eslint-disable-line @typescript-eslint/no-unused-vars
-    try { await api.put(`/searches/${id}`, {...body, active: !search.active}); load(); }
+    return api.put(`/searches/${id}`, {...body, active});
+  };
+  const toggle = async (search: Search) => {
+    try { await setActive(search, !search.active); load(); }
     catch (e) { setError(apiError(e, 'Não foi possível alterar a busca.')); }
   };
   const remove = async (search: Search) => {
-    if (!window.confirm(`Excluir a busca "${search.name}"? Os achados já encontrados continuam na lista.`)) return;
+    if (!await confirm.ask(`Excluir a busca "${search.name}"?`, 'Os achados já encontrados continuam na tela Achados.', 'Excluir')) return;
     try { await api.delete(`/searches/${search.id}`); setNotice('Busca excluída.'); load(); }
     catch (e) { setError(apiError(e, 'Não foi possível excluir a busca.')); }
   };
-  const groups = schedules.map(s => s.group_name);
+  const chosen = searches.filter(s => sel.has(s.id));
+  const bulk = async (kind: 'on' | 'off' | 'delete') => {
+    if (kind === 'delete' && !await confirm.ask(`Excluir ${chosen.length} busca(s)?`, 'Os achados já encontrados continuam na tela Achados.', 'Excluir')) return;
+    setError(''); setNotice('');
+    const r = await eachItem(chosen, s => kind === 'delete' ? api.delete(`/searches/${s.id}`) : setActive(s, kind === 'on'));
+    setNotice(`${r.ok} busca(s) ${kind === 'delete' ? 'excluída(s)' : kind === 'on' ? 'ativada(s)' : 'pausada(s)'}.${r.failed ? ` ${r.failed} falharam.` : ''}`);
+    sel.clear(); load();
+  };
 
   return <Box>
     <PageHeader title="Buscas" description={<>A extensão procura ofertas no Mercado Livre pelo seu Chrome e guarda o que encontrar em <Link to="/listings">Achados</Link>.</>}
@@ -109,9 +120,11 @@ export default function SearchesPage() {
     <Feedback error={error} notice={notice} onRetry={load} onClose={() => { setError(''); setNotice(''); }}/>
     <Loading show={loading}/>
     {!loading && !searches.length && <Empty text="Nenhuma busca ainda. Crie uma com os termos do seu nicho."/>}
-    <Stack spacing={2} mt={2}>
-      {searches.map(s => <Card key={s.id} variant="outlined" sx={{opacity: s.active ? 1 : .6}}><CardContent>
+    {searches.length > 0 && <Box mt={2}><SelectAll total={searches.length} selected={sel.count} onAll={() => sel.setAll(searches.map(s => s.id))} onNone={sel.clear}/></Box>}
+    <Stack spacing={2} mt={1}>
+      {searches.map(s => <Card key={s.id} variant="outlined" sx={{opacity: s.active ? 1 : .6, borderColor: sel.has(s.id) ? 'primary.main' : undefined}}><CardContent>
         <Stack direction={{xs: 'column', md: 'row'}} justifyContent="space-between" spacing={2}>
+          <Checkbox checked={sel.has(s.id)} onChange={() => sel.toggle(s.id)} sx={{alignSelf: 'flex-start', m: -1}} inputProps={{'aria-label': `Selecionar ${s.name}`}}/>
           <Box flex={1} minWidth={0}>
             <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
               <Typography variant="h6" fontWeight={700}>{s.name}</Typography>
@@ -144,6 +157,12 @@ export default function SearchesPage() {
 
     <Typography variant="body2" color="text.secondary" mt={4}>Horários, limites e categorias de cada grupo ficam em <Link to="/groups">Grupos</Link>.
       Para escolher quais produtos vão para quais grupos e em que ritmo, use <Link to="/campaigns">Campanhas</Link>.</Typography>
-    <SearchDialog draft={draft} groups={groups} onClose={() => setDraft(null)} onSaved={saved} onError={setError}/>
+    <SearchDialog draft={draft} onClose={() => setDraft(null)} onSaved={saved} onError={setError}/>
+    <BulkBar count={sel.count} noun="busca(s) selecionada(s)" onClear={sel.clear}>
+      <Button size="small" variant="outlined" onClick={() => bulk('on')}>Ativar</Button>
+      <Button size="small" variant="outlined" onClick={() => bulk('off')}>Pausar</Button>
+      <Button size="small" variant="outlined" startIcon={<DeleteIcon/>} onClick={() => bulk('delete')}>Excluir</Button>
+    </BulkBar>
+    {confirm.dialog}
   </Box>;
 }

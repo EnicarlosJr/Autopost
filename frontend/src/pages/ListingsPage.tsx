@@ -7,6 +7,8 @@ import {timeAgo} from '../labels';
 import {usePaged} from '../hooks/usePaged';
 import {Empty, Feedback, Loading, LoadMore} from '../components/Feedback';
 import {Meta, PageHeader, PriceTag} from '../components/Ui';
+import {BulkBar, SelectAll, SelectMatching, fetchAllIds, inBatches, useConfirm} from '../components/Bulk';
+import {DeleteIcon} from '../components/Icons';
 
 const TABS: [string, string][] = [['new', 'Para aprovar'], ['scheduled', 'Agendados'], ['discarded', 'Descartados'], ['rejected', 'Fora dos filtros']];
 type Result = {scheduled: {id: number; scheduled_at: string}[]; skipped: {id: number; reason: string}[]};
@@ -15,7 +17,7 @@ const when = (iso: string) => new Date(iso).toLocaleString('pt-BR', {weekday: 's
 function summary(result: Result): string {
   if (!result.scheduled.length && !result.skipped.length) return 'Nada para agendar.';
   const times = result.scheduled.map(s => s.scheduled_at).sort();
-  const parts = [];
+  const parts: string[] = [];
   if (times.length) parts.push(`${times.length} agendado(s): de ${when(times[0])} até ${when(times[times.length - 1])}`);
   if (result.skipped.length) parts.push(`${result.skipped.length} ignorado(s) (${[...new Set(result.skipped.map(s => s.reason))].join('; ')})`);
   return parts.join('. ') + '.';
@@ -25,11 +27,20 @@ function ScheduleDialog({ids, onClose, onDone, onError}: {ids: number[] | null; 
   const [mode, setMode] = useState<'auto' | 'time'>('auto'), [time, setTime] = useState(''), [busy, setBusy] = useState(false);
   useEffect(() => { setMode('auto'); setTime(''); }, [ids]);
   if (!ids) return null;
+  const tooMany = ids.length > 200;
   const submit = async () => {
     setBusy(true);
     try {
-      const body = {ids, scheduled_at: mode === 'time' && time ? new Date(time).toISOString() : null};
-      onDone(summary((await api.post<Result>('/listings/approve', body)).data));
+      if (mode === 'time') {
+        onDone(summary((await api.post<Result>('/listings/approve', {ids, scheduled_at: new Date(time).toISOString()})).data));
+      } else {   // em lotes de 200: cada lote continua a agenda de onde o anterior parou
+        const all: Result = {scheduled: [], skipped: []};
+        for (let i = 0; i < ids.length; i += 200) {
+          const r = (await api.post<Result>('/listings/approve', {ids: ids.slice(i, i + 200), scheduled_at: null})).data;
+          all.scheduled.push(...r.scheduled); all.skipped.push(...r.skipped);
+        }
+        onDone(summary(all));
+      }
     } catch (e) { onError(apiError(e, 'Não foi possível agendar.')); }
     finally { setBusy(false); }
   };
@@ -38,7 +49,7 @@ function ScheduleDialog({ids, onClose, onDone, onError}: {ids: number[] | null; 
     <DialogContent>
       <RadioGroup value={mode} onChange={e => setMode(e.target.value as 'auto' | 'time')}>
         <FormControlLabel value="auto" control={<Radio/>} label="Distribuir nos próximos horários livres do grupo"/>
-        <FormControlLabel value="time" control={<Radio/>} label="Escolher o horário"/>
+        <FormControlLabel value="time" control={<Radio/>} disabled={tooMany} label={tooMany ? 'Escolher o horário (até 200 por vez)' : 'Escolher o horário'}/>
       </RadioGroup>
       {mode === 'time' && <TextField fullWidth sx={{mt: 1}} type="datetime-local" label="Primeiro envio" InputLabelProps={{shrink: true}}
         helperText="Se forem vários, os seguintes saem com o intervalo da agenda do grupo." value={time} onChange={e => setTime(e.target.value)}/>}
@@ -83,18 +94,26 @@ export default function ListingsPage() {
   const [selected, setSelected] = useState<number[]>([]), [dialog, setDialog] = useState<number[] | null>(null);
   const [notice, setNotice] = useState(''), [busy, setBusy] = useState(false);
   const query = tab === 'rejected' ? {status: 'new', matches: 'false'} : {status: tab, matches: tab === 'new' ? 'true' : 'all'};
-  const {items, total, loading, error, setError, reload, loadMore, hasMore} = usePaged<Listing>('/listings', {...query, search_id: searchId || undefined}, 40);
+  const listParams = {...query, search_id: searchId || undefined};
+  const {items, total, loading, error, setError, reload, loadMore, hasMore} = usePaged<Listing>('/listings', listParams, 40);
+  const confirm = useConfirm();
+  const selectable = tab === 'scheduled' ? [] : items.map(i => i.id);   // agendados já viraram publicação: as ações ficam na Fila
+  const pageSelected = selectable.length > 0 && selectable.every(id => selected.includes(id));
   useEffect(() => { api.get<Search[]>('/searches').then(r => setSearches(r.data)).catch(() => {}); }, []);
   useEffect(() => setSelected([]), [tab, searchId]);
   const set = (key: string, value: string) => { const next = new URLSearchParams(params); if (value) next.set(key, value); else next.delete(key); setParams(next); };
   const toggle = (id: number) => setSelected(old => old.includes(id) ? old.filter(x => x !== id) : [...old, id]);
   const done = (text: string) => { setDialog(null); setSelected([]); setNotice(text); reload(); };
   const discard = async (ids: number[]) => {
-    try { await api.post('/listings/discard', {ids}); setSelected([]); setNotice(`${ids.length} descartado(s).`); reload(); }
+    try { const r = await inBatches(ids, chunk => api.post('/listings/discard', {ids: chunk})); setSelected([]); setNotice(`${r.discarded ?? 0} descartado(s).`); reload(); }
     catch (e) { setError(apiError(e, 'Não foi possível descartar.')); }
   };
+  const restore = async (ids: number[]) => {
+    try { const r = await inBatches(ids, chunk => api.post('/listings/restore', {ids: chunk})); setSelected([]); setNotice(`${r.restored ?? 0} achado(s) de volta em "Para aprovar".`); reload(); }
+    catch (e) { setError(apiError(e, 'Não foi possível restaurar.')); }
+  };
   const acceptAll = async () => {
-    if (!window.confirm(`Aprovar todos os ${total} achados${searchId ? ' desta busca' : ''} e distribuir nos horários dos grupos?`)) return;
+    if (!await confirm.ask(`Aprovar todos os ${total} achados?`, `Os achados${searchId ? ' desta busca' : ''} (até 200 de cada vez, os de maior nota primeiro) são distribuídos nos horários livres dos grupos.`, 'Aprovar todos')) return;
     setBusy(true);
     try { done(summary((await api.post<Result>('/listings/accept-all', {search_id: searchId ? Number(searchId) : null})).data)); }
     catch (e) { setError(apiError(e, 'Não foi possível aprovar.')); }
@@ -111,26 +130,33 @@ export default function ListingsPage() {
       {TABS.map(([v, l]) => <Tab key={v} value={v} label={v === tab ? `${l} (${total})` : l}/>)}
     </Tabs>
     <Feedback error={error} notice={notice} onRetry={() => reload()} onClose={() => { setError(''); setNotice(''); }}/>
-    {tab === 'new' && items.length > 0 && <Stack direction="row" spacing={1} mb={2} flexWrap="wrap" useFlexGap alignItems="center">
-      <FormControlLabel sx={{mr: 1}} label={selected.length ? `${selected.length} selecionado(s)` : 'Selecionar todos'}
-        control={<Checkbox checked={selected.length === items.length} indeterminate={selected.length > 0 && selected.length < items.length}
-          onChange={() => setSelected(selected.length === items.length ? [] : items.map(i => i.id))}/>}/>
-      <Button variant="contained" disabled={!selected.length} onClick={() => setDialog(selected)}>Aprovar selecionados</Button>
-      <Button color="error" disabled={!selected.length} onClick={() => discard(selected)}>Descartar selecionados</Button>
+    {selectable.length > 0 && <Stack direction="row" spacing={1} mb={1} flexWrap="wrap" useFlexGap alignItems="center">
+      <SelectAll total={selectable.length} selected={selectable.filter(id => selected.includes(id)).length}
+        onAll={() => setSelected(old => [...new Set([...old, ...selectable])])} onNone={() => setSelected([])} label={`Selecionar os ${selectable.length} desta página`}/>
       <Box flex={1}/>
-      <Button variant="outlined" disabled={busy} onClick={acceptAll}>Aceitar todos ({total})</Button>
+      {tab === 'new' && <Button variant="outlined" disabled={busy} onClick={acceptAll}>Aceitar todos ({total})</Button>}
     </Stack>}
+    <SelectMatching pageCount={selectable.length} pageSelected={pageSelected} selected={selected.length} total={total} noun="achados"
+      onSelectAll={async () => setSelected(await fetchAllIds('/listings', listParams))} onClear={() => setSelected([])}/>
     <Loading show={loading}/>
     {!loading && !items.length && <Empty text={tab === 'new' ? 'Nenhum achado esperando aprovação. As buscas trazem novos itens conforme a frequência de cada uma.' : 'Nada aqui.'}/>}
     <Stack spacing={1.5}>
       {items.map(item => <ListingCard key={item.id} item={item} selected={selected.includes(item.id)}
-        onToggle={tab === 'new' ? () => toggle(item.id) : undefined}
+        onToggle={selectable.length ? () => toggle(item.id) : undefined}
         actions={tab === 'new' ? <>
           <Button size="small" variant="contained" onClick={() => setDialog([item.id])}>Aprovar</Button>
           <Button size="small" color="error" onClick={() => discard([item.id])}>Descartar</Button>
-        </> : tab === 'scheduled' && item.publication_id ? <Button size="small" component={Link} to="/queue?tab=scheduled">Ver na fila</Button> : undefined}/>)}
+        </> : tab === 'rejected' ? <Button size="small" color="error" onClick={() => discard([item.id])}>Descartar</Button>
+          : tab === 'discarded' ? <Button size="small" onClick={() => restore([item.id])}>Restaurar</Button>
+          : tab === 'scheduled' && item.publication_id ? <Button size="small" component={Link} to="/queue?tab=scheduled">Ver na fila</Button> : undefined}/>)}
     </Stack>
     <LoadMore show={hasMore} onClick={loadMore} loading={loading}/>
     <ScheduleDialog ids={dialog} onClose={() => setDialog(null)} onDone={done} onError={setError}/>
+    <BulkBar count={selected.length} noun="achado(s) selecionado(s)" onClear={() => setSelected([])}>
+      {tab === 'new' && <Button size="small" variant="outlined" onClick={() => setDialog(selected)}>Aprovar</Button>}
+      {(tab === 'new' || tab === 'rejected') && <Button size="small" variant="outlined" startIcon={<DeleteIcon/>} onClick={() => discard(selected)}>Descartar</Button>}
+      {tab === 'discarded' && <Button size="small" variant="outlined" onClick={() => restore(selected)}>Restaurar para aprovação</Button>}
+    </BulkBar>
+    {confirm.dialog}
   </Box>;
 }

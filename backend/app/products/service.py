@@ -56,16 +56,29 @@ def apply_server_fields(product: Product, fields: dict) -> None:
         product.captured_at = now()
 
 
-def _refresh_publications(db: Session, product: Product, previous_text: str, old_price: float | None,
+def _standard_texts(db: Session, product: Product) -> dict:
+    """Texto padrão atual do produto em cada modelo em uso: chave = campanha (None = ofertas avulsas)."""
+    from app.models.campaign import Campaign
+    ids = set(db.scalars(select(Publication.campaign_id).where(Publication.product_id == product.id,
+                                                              Publication.status.in_(OPEN_STATUSES),
+                                                              Publication.campaign_id.is_not(None))))
+    texts = {None: normalize_offer_text(offer_text(db, product))}
+    for cid in ids:
+        texts[cid] = normalize_offer_text(offer_text(db, product, db.get(Campaign, cid)))
+    return texts
+
+
+def _refresh_publications(db: Session, product: Product, previous_texts: dict, old_price: float | None,
                           old_original: float | None) -> None:
     """Atualiza o texto padrão das publicações abertas; segura as editadas à mão se o preço mudou."""
-    new_text = offer_text(db, product)
+    new_texts = _standard_texts(db, product)
     price_changed = (old_price, old_original) != (product.price, product.original_price)
     rows = db.scalars(select(Publication).where(Publication.product_id == product.id,
                                                 Publication.status.in_(OPEN_STATUSES)))
     for publication in rows:
-        if normalize_offer_text(publication.message) == previous_text:
-            publication.message = new_text
+        key = publication.campaign_id if publication.campaign_id in new_texts else None
+        if normalize_offer_text(publication.message) == previous_texts.get(key, previous_texts[None]):
+            publication.message = new_texts[key]
         elif price_changed and publication.status in ("approved", "scheduled"):
             publication.status = "failed"
             publication.last_error = (f"O preço mudou ({_money(old_price)} para {_money(product.price)}) e o texto "
@@ -88,7 +101,7 @@ def _swap_link(db: Session, product: Product, old_links: list[str], new_link: st
 
 def apply_capture(db: Session, product: Product, data, *, generate: bool = False) -> None:
     """Grava os dados lidos no navegador do usuário (fonte mais confiável para lojas que bloqueiam o servidor)."""
-    previous_text = normalize_offer_text(offer_text(db, product))
+    previous_text = _standard_texts(db, product)
     old_price, old_original = product.price, product.original_price
     if data.title.strip(): product.title = data.title.strip()
     if data.description.strip(): product.description = data.description.strip()
@@ -122,7 +135,7 @@ def apply_capture(db: Session, product: Product, data, *, generate: bool = False
 
 def apply_manual_edit(db: Session, product: Product, changes: dict) -> None:
     """Edição feita pelo usuário no painel: vale como leitura confirmada dos preços."""
-    previous_text = normalize_offer_text(offer_text(db, product))
+    previous_text = _standard_texts(db, product)
     old_price, old_original = product.price, product.original_price
     for key, value in changes.items():
         if key == "tags":

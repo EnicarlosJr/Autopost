@@ -7,7 +7,7 @@ from app.database.session import get_db
 from app.models.product import Product
 from app.products.media import remove_image
 from app.products.service import apply_capture, apply_manual_edit, add_note
-from app.products.sources import BROWSER_NOTICE, needs_browser
+from app.products.sources import BROWSER_NOTICE, marketplace_of, needs_browser
 from app.products.urls import normalize_product_url
 from app.publications.service import main_rule, maybe_generate_publication
 import json
@@ -71,7 +71,7 @@ def create_product(data: ProductCreate, db: Session = Depends(get_db)):
     original = normalize_product_url(str(data.original_url))
     if db.scalar(select(Product.id).where(Product.original_url == original)):
         raise HTTPException(409, "Este link de produto já está cadastrado")
-    product = Product(original_url=original, affiliate_url=str(data.affiliate_url), marketplace=data.marketplace.strip(),
+    product = Product(original_url=original, affiliate_url=str(data.affiliate_url), marketplace=data.marketplace.strip() or marketplace_of(original),
                       category=data.category.strip(), notes=data.notes, status="pending")
     db.add(product)
     _commit_new(db)
@@ -91,7 +91,7 @@ def create_from_browser(data: BrowserProductCreate, db: Session = Depends(get_db
     created = product is None
     if created:
         affiliate = str(data.affiliate_url) if data.affiliate_url else original
-        product = Product(original_url=original, affiliate_url=affiliate, marketplace=data.marketplace.strip(),
+        product = Product(original_url=original, affiliate_url=affiliate, marketplace=data.marketplace.strip() or marketplace_of(original),
                           category=data.category.strip(), notes="", status="processing")
         db.add(product)
         try:

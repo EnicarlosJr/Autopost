@@ -80,7 +80,7 @@ export async function sendPublication({id, useOpenChat = false}) {
   try {
     // Forma de envio da campanha: só o texto (o WhatsApp monta a prévia do link) ou foto padronizada + legenda.
     const imageBase64 = publication.send_mode === 'image' ? await apiBase64(`/publications/${id}/image`) : '';
-    const result = await sendToWhatsApp({group: publication.group_name, message: publication.message, useOpenChat, imageBase64});
+    const result = await sendToWhatsApp({group: publication.group_name, message: publication.outgoing_message || publication.message, useOpenChat, imageBase64});
     const detail = `Prévia do link: ${result.preview || 'sem link'}. Mensagem vista na conversa: ${result.confirmed ? 'sim' : 'não confirmada'}.`;
     log('enviada', id, detail);
     await api(`/publications/${id}/sent`, {method: 'POST', body: {detail}});

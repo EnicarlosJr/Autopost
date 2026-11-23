@@ -28,9 +28,15 @@ def approval_required(db: Session) -> bool:
     rule = main_rule(db)
     return True if rule is None or not rule.enabled else bool(rule.require_approval)
 
-def offer_text(db: Session, product: Product) -> str:
+def template_for(db: Session, campaign=None) -> str | None:
+    """Modelo da mensagem: o da campanha quando ela personaliza, senão o do perfil."""
+    if campaign is not None and campaign.custom_style and (campaign.message_template or "").strip():
+        return campaign.message_template
     rule = main_rule(db)
-    return standard_offer_text(product, rule.message_template if rule else None)
+    return rule.message_template if rule else None
+
+def offer_text(db: Session, product: Product, campaign=None) -> str:
+    return standard_offer_text(product, template_for(db, campaign))
 
 def ready_status(publication: Publication, require_approval: bool) -> str:
     """Estado de uma publicação que já pode sair (sem agendamento pendente)."""

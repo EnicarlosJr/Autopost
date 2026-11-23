@@ -1,6 +1,6 @@
 import {useCallback, useEffect, useState} from 'react';
 import {Link, useNavigate} from 'react-router-dom';
-import {Box, Button, Card, Chip, Collapse, IconButton, LinearProgress, Stack, Tab, Tabs, Tooltip, Typography} from '@mui/material';
+import {Box, Button, Card, Checkbox, Chip, Collapse, IconButton, LinearProgress, Stack, Tab, Tabs, Tooltip, Typography} from '@mui/material';
 import {api, apiError} from '../services/api';
 import type {Campaign} from '../types/campaign';
 import type {Publication} from '../types/models';
@@ -8,9 +8,14 @@ import {campaignStatus, dateTime, rhythm, strategyLabel, WEEKDAYS} from '../camp
 import {publicationLabel} from '../labels';
 import {Empty, Feedback, Loading} from '../components/Feedback';
 import {PageHeader, Meta} from '../components/Ui';
-import {ExpandAll, useConfirm} from '../components/Bulk';
+import {BulkBar, ExpandAll, SelectAll, eachItem, useConfirm, useSelection} from '../components/Bulk';
 import {AddIcon, CopyIcon, DeleteIcon, EditIcon, ExpandIcon, PauseIcon, PlayIcon, RefreshIcon, SearchIcon, StopIcon} from '../components/Icons';
 import {display, tokens} from '../theme';
+
+/** O que cada campanha permite agora (mesmas regras dos botões de cada cartão). */
+const abilities = (c: Campaign) => ({pause: c.status === 'scheduled', resume: c.status === 'paused', edit: ['draft', 'paused'].includes(c.status),
+  schedule: c.status === 'draft', cancel: !['draft', 'cancelled'].includes(c.status) && !['completed', 'completed_with_failures', 'failed'].includes(c.display_status),
+  remove: ['draft', 'cancelled', 'completed', 'completed_with_failures', 'failed'].includes(c.display_status)});
 
 const FILTERS: [string, string, string[]][] = [
   ['active', 'Em andamento', ['scheduled', 'running']], ['paused', 'Pausadas', ['paused']], ['draft', 'Rascunhos', ['draft']],
@@ -75,7 +80,7 @@ export default function CampaignsPage() {
   const [items, setItems] = useState<Campaign[]>([]), [loading, setLoading] = useState(true);
   const [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState<number | null>(null);
   const [filter, setFilter] = useState('active'), [open, setOpen] = useState<number[]>([]);
-  const confirm = useConfirm();
+  const confirm = useConfirm(); const sel = useSelection();
   const load = useCallback(async () => {
     try { setItems((await api.get<Campaign[]>('/campaigns')).data); setError(''); }
     catch (e) { setError(apiError(e, 'Não foi possível carregar as campanhas.')); }
@@ -95,6 +100,19 @@ export default function CampaignsPage() {
     finally { setBusy(null); }
   };
   const toggle = (id: number) => setOpen(o => o.includes(id) ? o.filter(x => x !== id) : [...o, id]);
+  useEffect(() => sel.clear(), [filter]); // eslint-disable-line react-hooks/exhaustive-deps
+  const chosen = items.filter(c => sel.has(c.id));
+  const bulk = async (kind: 'pause' | 'resume' | 'cancel' | 'remove', label: string) => {
+    const targets = chosen.filter(c => abilities(c)[kind]);
+    if (kind === 'cancel' && !await confirm.ask(`Cancelar ${targets.length} campanha(s)?`, 'Os anúncios que ainda não saíram serão cancelados. O que já foi enviado continua no histórico.', 'Cancelar campanhas')) return;
+    if (kind === 'remove' && !await confirm.ask(`Excluir ${targets.length} campanha(s)?`, 'As campanhas saem da lista. As publicações já enviadas continuam na Fila.', 'Excluir')) return;
+    setError(''); setNotice('');
+    const r = await eachItem(targets, c => kind === 'remove' ? api.delete(`/campaigns/${c.id}`) : api.post(`/campaigns/${c.id}/${kind}`));
+    const skipped = chosen.length - targets.length;
+    setNotice(`${r.ok} campanha(s) ${label}.${skipped ? ` ${skipped} não permitiam esta ação.` : ''}${r.failed ? ` ${r.failed} falharam.` : ''}`);
+    sel.clear(); load();
+  };
+  const count = (kind: 'pause' | 'resume' | 'cancel' | 'remove') => chosen.filter(c => abilities(c)[kind]).length;
 
   return <>
     <PageHeader title="Campanhas" description="Defina quais produtos vão para quais grupos, em que ritmo e em quais horários."
@@ -107,6 +125,7 @@ export default function CampaignsPage() {
       </Tabs>
       {shown.length > 1 && <ExpandAll onExpand={() => setOpen(shown.map(c => c.id))} onCollapse={() => setOpen([])}/>}
     </Stack>
+    {shown.length > 0 && <SelectAll total={shown.length} selected={shown.filter(c => sel.has(c.id)).length} onAll={() => sel.setAll(shown.map(c => c.id))} onNone={sel.clear}/>}
     <Feedback error={error} notice={notice} onRetry={load} onClose={() => { setError(''); setNotice(''); }}/>
     <Loading show={loading}/>
     {!loading && !shown.length && <Empty text={items.length ? 'Nenhuma campanha neste filtro.' : 'Nenhuma campanha ainda. Crie a primeira escolhendo produtos, grupos e o ritmo dos envios.'}/>}
@@ -114,11 +133,10 @@ export default function CampaignsPage() {
       {shown.map(c => {
         const [label, color] = campaignStatus[c.display_status] ?? [c.display_status, 'default'];
         const expanded = open.includes(c.id);
-        const can = {pause: c.status === 'scheduled', resume: c.status === 'paused', edit: ['draft', 'paused'].includes(c.status),
-          schedule: c.status === 'draft', cancel: !['draft', 'cancelled'].includes(c.status) && !['completed', 'completed_with_failures', 'failed'].includes(c.display_status),
-          remove: ['draft', 'cancelled', 'completed', 'completed_with_failures', 'failed'].includes(c.display_status)};
+        const can = abilities(c);
         return <Card key={c.id}>
           <Box sx={{display: 'flex', alignItems: 'center', gap: 2, p: 2, cursor: 'pointer'}} onClick={() => toggle(c.id)}>
+            <Checkbox checked={sel.has(c.id)} onClick={e => e.stopPropagation()} onChange={() => sel.toggle(c.id)} sx={{m: -1}} inputProps={{'aria-label': `Selecionar ${c.name}`}}/>
             <IconButton size="small" aria-label={expanded ? 'Recolher detalhes' : 'Expandir detalhes'} aria-expanded={expanded}
               onClick={e => { e.stopPropagation(); toggle(c.id); }} sx={{transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform .15s'}}><ExpandIcon/></IconButton>
             <Box flex={1} minWidth={0}>
@@ -159,6 +177,13 @@ export default function CampaignsPage() {
         </Card>;
       })}
     </Stack>
+    <BulkBar count={sel.count} noun="campanha(s) selecionada(s)" onClear={sel.clear}>
+      {count('pause') > 0 && <Button size="small" variant="outlined" startIcon={<PauseIcon/>} onClick={() => bulk('pause', 'pausada(s)')}>Pausar ({count('pause')})</Button>}
+      {count('resume') > 0 && <Button size="small" variant="outlined" startIcon={<PlayIcon/>} onClick={() => bulk('resume', 'retomada(s)')}>Retomar ({count('resume')})</Button>}
+      {count('cancel') > 0 && <Button size="small" variant="outlined" startIcon={<StopIcon/>} onClick={() => bulk('cancel', 'cancelada(s)')}>Cancelar ({count('cancel')})</Button>}
+      {count('remove') > 0 && <Button size="small" variant="outlined" startIcon={<DeleteIcon/>} onClick={() => bulk('remove', 'excluída(s)')}>Excluir ({count('remove')})</Button>}
+      {!count('pause') && !count('resume') && !count('cancel') && !count('remove') && <Typography variant="body2">Nenhuma ação vale para todas as selecionadas.</Typography>}
+    </BulkBar>
     {confirm.dialog}
   </>;
 }

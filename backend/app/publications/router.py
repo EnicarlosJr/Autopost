@@ -71,6 +71,7 @@ class PublicationRead(BaseModel):
     last_error: str = ""
     send_mode: str = "preview"          # "preview" (texto com prévia do link) ou "image" (foto + legenda)
     send_mode_choice: str | None = None  # escolhida só para esta publicação (vazio = padrão)
+    outgoing_message: str = ""           # exatamente o que vai para o grupo (com o #publi no topo)
     product: ProductBrief | None = None
 
     @field_validator("message")
@@ -240,6 +241,24 @@ def bulk_cancel(data: BulkIds, db: Session = Depends(get_db)):
     db.commit()
     return {"cancelled": len(rows)}
 
+DELETABLE = {"cancelled", "failed"}
+
+
+@router.post("/bulk/delete")
+def bulk_delete(data: BulkIds, db: Session = Depends(get_db)):
+    """Apaga de vez publicações canceladas ou com falha. Enviadas ficam: elas contam para o prazo de repostagem."""
+    from app.models.search import Listing
+    rows = list(db.scalars(select(Publication).where(Publication.id.in_(data.ids))))
+    gone = [p for p in rows if p.status in DELETABLE]
+    ids = [p.id for p in gone]
+    if ids:
+        db.execute(update(Listing).where(Listing.publication_id.in_(ids)).values(publication_id=None))
+        for p in gone:
+            db.delete(p)
+    db.commit()
+    return {"deleted": len(gone), "skipped": len(rows) - len(gone)}
+
+
 @router.post("/{publication_id}/approve", response_model=PublicationRead)
 def approve(publication_id: int, db: Session = Depends(get_db)):
     publication = _get(db, publication_id)
@@ -262,9 +281,11 @@ def publication_image(publication_id: int, db: Session = Depends(get_db)):
     publication = _get(db, publication_id)
     if not publication.product:
         raise HTTPException(404, "Publicação sem produto")
-    _, title, handle = publication.delivery()
+    from app.publications.messages import discount_percent
+    st, p = publication.style(), publication.product
     try:
-        data = social_image(publication.product, title, handle)
+        data = social_image(p, st["title"], st["handle"], st["disclosure"],
+                            discount_percent(p.price, p.original_price) if st["show_discount"] else None)
     except ValueError as exc:
         raise HTTPException(422, str(exc))
     return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})

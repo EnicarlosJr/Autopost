@@ -1,6 +1,6 @@
 import {ChangeEvent, useEffect, useRef, useState} from 'react';
 import {useNavigate, useSearchParams} from 'react-router-dom';
-import {Alert, Badge, Box, Button, Card, CardContent, Checkbox, Chip, CircularProgress, Collapse, Dialog, DialogActions, DialogContent, DialogTitle, Grid, IconButton, InputAdornment, LinearProgress, Menu, MenuItem, Stack, TextField, Tooltip, Typography} from '@mui/material';
+import {Alert, Autocomplete, Badge, Box, Button, Card, CardContent, Checkbox, Chip, CircularProgress, Collapse, Dialog, DialogActions, DialogContent, DialogTitle, Grid, IconButton, InputAdornment, LinearProgress, Menu, MenuItem, Stack, TextField, Tooltip, Typography} from '@mui/material';
 import {api, apiError} from '../services/api';
 import {captureInBrowser, extensionStatus} from '../services/sender';
 import type {Product} from '../types/product';
@@ -9,7 +9,7 @@ import {usePaged} from '../hooks/usePaged';
 import {Empty, Feedback, Loading, LoadMore} from '../components/Feedback';
 import {Meta, PageHeader, PriceTag} from '../components/Ui';
 import WhatsAppPreview from '../components/WhatsAppPreview';
-import {BulkBar, MultiPick, SelectAll, useConfirm, useSelection} from '../components/Bulk';
+import {BulkBar, MultiPick, SelectAll, SelectMatching, fetchAllIds, inBatches, useConfirm, useSelection} from '../components/Bulk';
 import {AddIcon, DeleteIcon, FilterIcon, RefreshIcon, SearchIcon, TagIcon} from '../components/Icons';
 import type {CampaignOptions} from '../types/campaign';
 
@@ -27,8 +27,9 @@ export default function ProductsPage() {
   const filters = {category: params.get('category') || '', tag: params.get('tag') || '', sort: params.get('sort') || 'newest',
     created_from: params.get('from') || ''};
   const [query, setQuery] = useState(''), [search, setSearch] = useState('');
-  const list = usePaged<Product>('/products', {status: status || undefined, q: search || undefined, category: filters.category || undefined,
-    tag: filters.tag || undefined, sort: filters.sort, created_from: filters.created_from ? new Date(filters.created_from).toISOString() : undefined});
+  const listParams = {status: status || undefined, q: search || undefined, category: filters.category || undefined,
+    tag: filters.tag || undefined, sort: filters.sort, created_from: filters.created_from ? new Date(filters.created_from).toISOString() : undefined};
+  const list = usePaged<Product>('/products', listParams);
   const navigate = useNavigate();
   const sel = useSelection(); const confirm = useConfirm();
   const [facets, setFacets] = useState<CampaignOptions | null>(null), [showFilters, setShowFilters] = useState(false);
@@ -46,9 +47,13 @@ export default function ProductsPage() {
   };
   const bulkDelete = async () => {
     if (!await confirm.ask(`Excluir ${sel.count} produto(s)?`, 'As publicações desses produtos também serão excluídas. Produtos sendo enviados agora ficam de fora.', `Excluir ${sel.count}`)) return;
-    runBulk(() => api.post('/products/bulk/delete', {ids: sel.ids}), r => `${r.deleted} produto(s) excluído(s).${r.skipped ? ` ${r.skipped} em envio ficaram de fora.` : ''}`);
+    runBulk(async () => ({data: await inBatches(sel.ids, chunk => api.post('/products/bulk/delete', {ids: chunk}))}),
+      r => `${r.deleted ?? 0} produto(s) excluído(s).${r.skipped ? ` ${r.skipped} em envio ficaram de fora.` : ''}`);
   };
-  const [original, setOriginal] = useState(''), [affiliate, setAffiliate] = useState(''), [marketplace, setMarketplace] = useState(''), [category, setCategory] = useState('');
+  const bulkUpdate = (body: object, ok: (r: Record<string, number>) => string) =>
+    runBulk(async () => ({data: await inBatches(sel.ids, chunk => api.post('/products/bulk/update', {...body, ids: chunk}))}), ok);
+  const pageSelected = list.items.length > 0 && list.items.every(p => sel.has(p.id));
+  const [original, setOriginal] = useState(''), [affiliate, setAffiliate] = useState(''), [category, setCategory] = useState('');
   const [notice, setNotice] = useState(''), [error, setError] = useState('');
   const [hasExtension, setHasExtension] = useState(false), [capturing, setCapturing] = useState<number | null>(null);
   const [bulk, setBulk] = useState<{done: number; total: number} | null>(null);
@@ -99,10 +104,12 @@ export default function ProductsPage() {
   };
 
   const create = () => run(async () => {
-    await api.post('/products', {original_url: original, affiliate_url: affiliate, marketplace, category});
+    await api.post('/products', {original_url: original.trim(), affiliate_url: affiliate.trim(), category: category.trim()});
     setOriginal(''); setAffiliate('');
   }, 'Falha ao cadastrar o produto.', needsBrowser(original) ? 'Produto cadastrado. A extensão vai ler os dados pelo navegador.' : 'Produto cadastrado. Extraindo dados…');
-  const remove = (p: Product) => { if (window.confirm(`Excluir ${p.title || 'este produto'}? As publicações dele também serão excluídas.`)) run(() => api.delete(`/products/${p.id}`), 'Falha ao excluir.', 'Produto excluído.'); };
+  const remove = async (p: Product) => {
+    if (await confirm.ask('Excluir produto?', `${p.title || 'Este produto'} e as publicações dele serão excluídos.`, 'Excluir')) run(() => api.delete(`/products/${p.id}`), 'Falha ao excluir.', 'Produto excluído.');
+  };
   const upload = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]; const id = uploadFor.current; event.target.value = '';
     if (!file || !id) return;
@@ -127,11 +134,12 @@ export default function ProductsPage() {
       <Typography variant="h6" component="h2" mb={0.5}>Cadastrar pelo link</Typography>
       <Typography variant="body2" color="text.secondary" mb={2}>Mais rápido: na página do produto, clique no ícone do Autopost na barra do Chrome.</Typography>
       <Grid container spacing={1.5}>
-        <Grid item xs={12} md={6}><TextField fullWidth label="Link original do produto" value={original} onChange={e => setOriginal(e.target.value)}/></Grid>
+        <Grid item xs={12} md={6}><TextField fullWidth label="Link original do produto" value={original} onChange={e => setOriginal(e.target.value)}
+          helperText="A loja é identificada pelo link."/></Grid>
         <Grid item xs={12} md={6}><TextField fullWidth label="Link de afiliado" value={affiliate} onChange={e => setAffiliate(e.target.value)}/></Grid>
-        <Grid item xs={6} md={4}><TextField fullWidth label="Categoria" value={category} onChange={e => setCategory(e.target.value)}/></Grid>
-        <Grid item xs={6} md={4}><TextField fullWidth label="Marketplace" value={marketplace} onChange={e => setMarketplace(e.target.value)}/></Grid>
-        <Grid item xs={12} md={4}><Button fullWidth variant="contained" sx={{height: 56}} disabled={!original || !affiliate} onClick={create}>Cadastrar produto</Button></Grid>
+        <Grid item xs={12} md={8}><Autocomplete freeSolo options={(facets?.categories ?? []).map(c => c.name)} value={category}
+          onInputChange={(_, v) => setCategory(v)} renderInput={params => <TextField {...params} label="Categoria (opcional)"/>}/></Grid>
+        <Grid item xs={12} md={4}><Button fullWidth variant="contained" sx={{height: 56}} disabled={!original.trim() || !affiliate.trim()} onClick={create}>Cadastrar produto</Button></Grid>
       </Grid>
     </CardContent></Card>
 
@@ -162,7 +170,9 @@ export default function ProductsPage() {
       </Grid></Card>
     </Collapse>
     {list.items.length > 0 && <SelectAll total={list.items.length} selected={list.items.filter(p => sel.has(p.id)).length}
-      onAll={() => sel.setAll(list.items.map(p => p.id))} onNone={sel.clear} label={`Selecionar os ${list.items.length} desta página`}/>}
+      onAll={() => sel.add(list.items.map(p => p.id))} onNone={sel.clear} label={`Selecionar os ${list.items.length} desta página`}/>}
+    <SelectMatching pageCount={list.items.length} pageSelected={pageSelected} selected={sel.count} total={list.total} noun="produtos"
+      onSelectAll={async () => sel.setAll(await fetchAllIds('/products', listParams))} onClear={sel.clear}/>
 
     {!hasExtension && <Alert severity="info" sx={{mb: 2}}>Instale a extensão do Autopost para ler preço anterior e desconto do Mercado Livre pelo seu navegador.</Alert>}
     {bulk && <Box mb={2}><Typography variant="body2" mb={0.5}>Atualizando preços: {bulk.done} de {bulk.total}</Typography><LinearProgress variant="determinate" value={bulk.done * 100 / bulk.total}/></Box>}
@@ -218,11 +228,10 @@ export default function ProductsPage() {
     </BulkBar>
     <Dialog open={bulkDialog === 'category'} onClose={() => setBulkDialog(null)} maxWidth="xs" fullWidth>
       <DialogTitle>Alterar categoria de {sel.count} produto(s)</DialogTitle>
-      <DialogContent><TextField fullWidth sx={{mt: 1}} label="Nova categoria" value={bulkCategory} onChange={e => setBulkCategory(e.target.value)}
-        helperText="Deixe vazio para remover a categoria." inputProps={{list: 'autopost-categories'}}/>
-        <datalist id="autopost-categories">{facets?.categories.map(c => <option key={c.name} value={c.name}/>)}</datalist></DialogContent>
+      <DialogContent><Autocomplete freeSolo sx={{mt: 1}} options={(facets?.categories ?? []).map(c => c.name)} value={bulkCategory}
+        onInputChange={(_, v) => setBulkCategory(v)} renderInput={params => <TextField {...params} label="Nova categoria" helperText="Deixe vazio para remover a categoria."/>}/></DialogContent>
       <DialogActions><Button onClick={() => setBulkDialog(null)}>Cancelar</Button>
-        <Button variant="contained" onClick={() => runBulk(() => api.post('/products/bulk/update', {ids: sel.ids, category: bulkCategory}), r => `Categoria alterada em ${r.updated} produto(s).`)}>Aplicar</Button></DialogActions>
+        <Button variant="contained" onClick={() => bulkUpdate({category: bulkCategory}, r => `Categoria alterada em ${r.updated ?? 0} produto(s).`)}>Aplicar</Button></DialogActions>
     </Dialog>
     <Dialog open={bulkDialog === 'tags'} onClose={() => setBulkDialog(null)} maxWidth="sm" fullWidth>
       <DialogTitle>Tags de {sel.count} produto(s)</DialogTitle>
@@ -232,7 +241,7 @@ export default function ProductsPage() {
       </Stack></DialogContent>
       <DialogActions><Button onClick={() => setBulkDialog(null)}>Cancelar</Button>
         <Button variant="contained" disabled={!bulkAdd.length && !bulkRemove.length}
-          onClick={() => runBulk(() => api.post('/products/bulk/update', {ids: sel.ids, add_tags: bulkAdd, remove_tags: bulkRemove}), r => `Tags atualizadas em ${r.updated} produto(s).`)}>Aplicar</Button></DialogActions>
+          onClick={() => bulkUpdate({add_tags: bulkAdd, remove_tags: bulkRemove}, r => `Tags atualizadas em ${r.updated ?? 0} produto(s).`)}>Aplicar</Button></DialogActions>
     </Dialog>
     {confirm.dialog}
 
@@ -244,19 +253,35 @@ export default function ProductsPage() {
 
     <Dialog open={Boolean(editing)} onClose={() => setEditing(null)} maxWidth="md" fullWidth>
       <DialogTitle>Editar produto</DialogTitle>
-      <DialogContent><Grid container spacing={1.5} sx={{pt: 1}}>
-        <Grid item xs={12}>{field('title', 'Nome do produto')}</Grid>
-        <Grid item xs={12}>{field('description', 'Descrição', {multiline: true, minRows: 2})}</Grid>
-        <Grid item xs={6} md={3}>{field('price', 'Preço atual (R$)')}</Grid>
-        <Grid item xs={6} md={3}>{field('original_price', 'Preço anterior (R$)')}</Grid>
-        <Grid item xs={12} md={6}>{field('price_note', 'Condição do preço (ex.: no Pix)')}</Grid>
-        <Grid item xs={12} md={6}>{field('store', 'Loja')}</Grid>
-        <Grid item xs={12} md={6}>{field('affiliate_url', 'Link de afiliado')}</Grid>
-        <Grid item xs={6}>{field('category', 'Categoria')}</Grid>
-        <Grid item xs={12}>{draft && <MultiPick label="Tags" value={draft.tags} onChange={v => setDraft({...draft, tags: v})} options={facets?.tags ?? []}/>}</Grid>
-        <Grid item xs={6}>{field('marketplace', 'Marketplace')}</Grid>
-        <Grid item xs={12}>{field('notes', 'Notas', {multiline: true, minRows: 2})}</Grid>
-      </Grid></DialogContent>
+      <DialogContent><Stack gap={2.5} sx={{pt: 1}}>
+        <Box>
+          <Typography fontWeight={600} mb={1}>Oferta</Typography>
+          <Grid container spacing={1.5}>
+            <Grid item xs={12}>{field('title', 'Nome do produto')}</Grid>
+            <Grid item xs={6} md={3}>{field('price', 'Preço atual (R$)', {placeholder: '129,90'})}</Grid>
+            <Grid item xs={6} md={3}>{field('original_price', 'Preço anterior (R$)', {helperText: 'Vazio = sem "de/por"'})}</Grid>
+            <Grid item xs={12} md={6}>{field('price_note', 'Condição do preço', {placeholder: 'no Pix'})}</Grid>
+            <Grid item xs={12}>{field('affiliate_url', 'Link de afiliado')}</Grid>
+          </Grid>
+        </Box>
+        <Box>
+          <Typography fontWeight={600} mb={1}>Organização</Typography>
+          <Grid container spacing={1.5}>
+            <Grid item xs={12} md={5}>{draft && <Autocomplete freeSolo options={(facets?.categories ?? []).map(c => c.name)} value={draft.category}
+              onInputChange={(_, v) => setDraft({...draft, category: v})} renderInput={params => <TextField {...params} label="Categoria"/>}/>}</Grid>
+            <Grid item xs={12} md={7}>{draft && <MultiPick label="Tags" value={draft.tags} onChange={v => setDraft({...draft, tags: v})} options={facets?.tags ?? []}/>}</Grid>
+          </Grid>
+        </Box>
+        <Box>
+          <Typography fontWeight={600} mb={1}>Outros dados</Typography>
+          <Grid container spacing={1.5}>
+            <Grid item xs={6}>{field('store', 'Vendido por (loja)')}</Grid>
+            <Grid item xs={6}>{field('marketplace', 'Marketplace', {helperText: 'Preenchido pelo link'})}</Grid>
+            <Grid item xs={12}>{field('description', 'Descrição', {multiline: true, minRows: 2})}</Grid>
+            <Grid item xs={12}>{field('notes', 'Notas internas', {multiline: true, minRows: 2, helperText: 'Não vão para a mensagem.'})}</Grid>
+          </Grid>
+        </Box>
+      </Stack></DialogContent>
       <DialogActions><Button onClick={() => setEditing(null)}>Cancelar</Button><Button variant="contained" onClick={saveEdit}>Salvar</Button></DialogActions>
     </Dialog>
   </>;

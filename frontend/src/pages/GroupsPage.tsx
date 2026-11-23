@@ -15,8 +15,12 @@ type Group = GroupSchedule & {categories: string[]; active: boolean; ml_categori
 function GroupEditor({group, options, onSave}: {group: Group; options: {name: string; count?: number}[]; onSave: (g: Group) => Promise<void>}) {
   const [value, setValue] = useState(group), [busy, setBusy] = useState(false);
   useEffect(() => setValue(group), [group]);
-  const num = (key: keyof Group, label: string, width = 130) => <TextField size="small" type="number" label={label} sx={{width}} value={value[key] as number}
-    onChange={e => setValue({...value, [key]: Number(e.target.value)})}/>;
+  // Limites de cada número: hora de 0 a 23 (fim até 24), contagens a partir de 1, dias a partir de 0.
+  const LIMITS: Partial<Record<keyof Group, [number, number]>> = {start_hour: [0, 23], end_hour: [1, 24], max_per_day: [1, 500], gap_minutes: [1, 1440], repost_days: [0, 365]};
+  const num = (key: keyof Group, label: string, width = 130) => { const [min, max] = LIMITS[key] ?? [0, 9999];
+    return <TextField size="small" type="number" label={label} sx={{width}} value={value[key] as number} inputProps={{min, max}}
+      onChange={e => setValue({...value, [key]: Math.min(max, Math.max(min, Math.round(Number(e.target.value) || 0)))})}/>; };
+  const invalid = value.end_hour <= value.start_hour;
   return <Stack gap={2}>
     <Box>
       <Typography fontWeight={600} mb={.5}>Categorias oficiais que este grupo recebe</Typography>
@@ -29,7 +33,8 @@ function GroupEditor({group, options, onSave}: {group: Group; options: {name: st
       {num('start_hour', 'Das (hora)', 100)}{num('end_hour', 'Até (hora)', 100)}{num('max_per_day', 'Máximo por dia')}
       {num('gap_minutes', 'Intervalo (min)')}{num('repost_days', 'Repostar após (dias)', 160)}
     </Stack>
-    <Box><Button variant="contained" disabled={busy} onClick={async () => { setBusy(true); try { await onSave(value); } finally { setBusy(false); } }}>Salvar grupo</Button></Box>
+    {invalid && <Typography variant="body2" color="error.main">O horário final precisa ser depois do inicial.</Typography>}
+    <Box><Button variant="contained" disabled={busy || invalid} onClick={async () => { setBusy(true); try { await onSave(value); } finally { setBusy(false); } }}>Salvar grupo</Button></Box>
   </Stack>;
 }
 

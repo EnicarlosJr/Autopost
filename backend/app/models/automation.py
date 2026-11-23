@@ -20,6 +20,9 @@ class AutomationRule(Base):
     send_mode: Mapped[str] = mapped_column(String(10), default="preview", server_default="preview")
     watermark_text: Mapped[str] = mapped_column(String(80), default="", server_default="")
     watermark_handle: Mapped[str] = mapped_column(String(60), default="", server_default="")
+    # Identificação de publicidade (o programa de afiliados pede que o afiliado se identifique): vai na foto e no texto.
+    disclosure_text: Mapped[str] = mapped_column(String(40), default="#publi", server_default="#publi")
+    show_discount: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")   # selo "-30% OFF" na foto
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 class AutomationLog(Base):

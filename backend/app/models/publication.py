@@ -37,19 +37,38 @@ class Publication(Base):
     send_mode_choice: Mapped[str | None] = mapped_column(String(10), nullable=True)
     product: Mapped[Product] = relationship(lazy="selectin")
 
-    def delivery(self) -> tuple[str, str, str]:
-        """(forma de envio, nome do grupo na marca d'água, Instagram): da publicação, senão da campanha,
-        senão das Configurações (ofertas avulsas)."""
+    def style(self) -> dict:
+        """Como esta publicação sai.
+
+        Forma de envio: a escolhida na publicação, senão a da campanha, senão a do perfil (ofertas avulsas).
+        Marca d'água: a da campanha quando ela personaliza, senão a do perfil.
+        Identificação de publicidade e selo de desconto: sempre os do perfil (a campanha não tira o #publi)."""
         from sqlalchemy import select
         from sqlalchemy.orm import object_session
         from app.models.automation import AutomationRule
         from app.models.campaign import Campaign
+        from app.publications.messages import clean_disclosure
         session = object_session(self)
-        source = session.get(Campaign, self.campaign_id) if session and self.campaign_id else None
-        if source is None and session is not None:
-            source = session.scalar(select(AutomationRule).order_by(AutomationRule.id).limit(1))
-        mode = self.send_mode_choice or (getattr(source, "send_mode", "") if source else "") or "preview"
-        return mode, (getattr(source, "watermark_text", "") or "") if source else "", (getattr(source, "watermark_handle", "") or "") if source else ""
+        campaign = session.get(Campaign, self.campaign_id) if session and self.campaign_id else None
+        rule = session.scalar(select(AutomationRule).order_by(AutomationRule.id).limit(1)) if session else None
+        marks = campaign if campaign is not None and campaign.custom_style else rule
+        mode = self.send_mode_choice or ((campaign.send_mode if campaign is not None else getattr(rule, "send_mode", "")) or "preview")
+        show = getattr(rule, "show_discount", True)
+        return {"mode": mode, "title": (getattr(marks, "watermark_text", "") or "") if marks is not None else "",
+                "handle": (getattr(marks, "watermark_handle", "") or "") if marks is not None else "",
+                "disclosure": clean_disclosure(getattr(rule, "disclosure_text", "") if rule is not None else ""),
+                "show_discount": True if show is None else bool(show)}
+
+    def delivery(self) -> tuple[str, str, str]:
+        """(forma de envio, nome do grupo na marca d'água, Instagram)."""
+        s = self.style()
+        return s["mode"], s["title"], s["handle"]
+
+    @property
+    def outgoing_message(self) -> str:
+        """O texto exatamente como vai para o grupo: com a identificação de publicidade no topo."""
+        from app.publications.messages import normalize_offer_text, with_disclosure
+        return with_disclosure(normalize_offer_text(self.message or ""), self.style()["disclosure"])
 
     @property
     def send_mode(self) -> str:

@@ -10,6 +10,7 @@ export type CampaignConfig = {
   start_hour: number; end_hour: number; weekdays: number[]; daily_limit: number; pause_every: number; pause_minutes: number;
   end_at: string | null; message_gap_seconds: number; reuse_days: number | null; group_daily_limit: number;
   send_mode: 'preview' | 'image'; watermark_text: string; watermark_handle: string;
+  custom_style: boolean; message_template: string;   // falso = modelo e marca d'água do perfil
 };
 
 export type Campaign = CampaignConfig & {
@@ -44,8 +45,11 @@ export type SearchResult = {
   listing_id: number; external_id: string; title: string; url: string; image_url: string; price: number | null; original_price: number | null;
   price_note: string; discount_pct: number | null; rating: number | null; sold: number | null; free_shipping: boolean; score: number; term: string;
   ml_category_id: string | null; category_name: string; category_path: string; matched: boolean; reason: string; in_campaign: boolean;
-  official_store?: boolean; fulfillment?: boolean;
+  official_store?: boolean; fulfillment?: boolean; seller?: string;
+  // Parecidos agrupados: o melhor de cada grupo (group_best) representa os outros.
+  group_key?: number; group_size?: number; group_best?: boolean; cheapest?: boolean; similar_in_campaign?: boolean;
 };
+export type BestPick = {listing_ids: number[]; available: number; groups: number};
 export type CampaignProductRow = {
   product_id: number; title: string; image_url: string; price: number | null; original_price: number | null; price_note: string;
   ml_category_id: string | null; category_name: string; category_path: string; tags: string[]; search_id: number | null; added_at: string; ready: boolean;

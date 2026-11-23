@@ -408,7 +408,7 @@ def apply(db: Session, c: Campaign, source: str = "painel") -> dict:
         return result
     created = 0
     for (product, group), at in zip(result["_pairs"], result["_times"]):
-        publication = Publication(product_id=product.id, group_name=group, message=offer_text(db, product),
+        publication = Publication(product_id=product.id, group_name=group, message=offer_text(db, product, c),
                                   approved_at=now(), scheduled_at=at, campaign_id=c.id)
         publication.status = "scheduled" if at > now() else "approved"
         try:

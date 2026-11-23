@@ -91,6 +91,7 @@ class ResultItem(BaseModel):
     official_store: bool = False
     fulfillment: bool = False
     ml_category_id: str | None = Field(default=None, max_length=20)
+    catalog_product_id: str | None = Field(default=None, max_length=20)   # /p/MLB...: mesmo produto em várias lojas
 
 class Results(BaseModel):
     items: list[ResultItem] = Field(default_factory=list, max_length=500)
@@ -262,6 +263,12 @@ def discard_listings(data: Decision, db: Session = Depends(get_db)):
     count = service.discard(_listings(db, data.ids))
     db.commit()
     return {"discarded": count}
+
+@listings_router.post("/restore")
+def restore_listings(data: Decision, db: Session = Depends(get_db)):
+    count = service.restore(_listings(db, data.ids))
+    db.commit()
+    return {"restored": count}
 
 @listings_router.get("/{listing_id}/history")
 def price_history(listing_id: int, db: Session = Depends(get_db)):

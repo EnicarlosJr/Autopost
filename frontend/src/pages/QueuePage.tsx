@@ -9,8 +9,9 @@ import {usePaged} from '../hooks/usePaged';
 import {Empty, Feedback, Loading, LoadMore} from '../components/Feedback';
 import WhatsAppPreview from '../components/WhatsAppPreview';
 import {Meta, PageHeader, PriceTag} from '../components/Ui';
-import {BulkBar, ExpandAll, SelectAll, useConfirm} from '../components/Bulk';
-import {RefreshIcon, SearchIcon} from '../components/Icons';
+import {BulkBar, ExpandAll, SelectAll, SelectMatching, fetchAllIds, inBatches, useConfirm} from '../components/Bulk';
+import {GroupPicker, ProductPicker} from '../components/Fields';
+import {DeleteIcon, RefreshIcon, SearchIcon} from '../components/Icons';
 import type {Campaign} from '../types/campaign';
 
 const TABS: [string, string][] = [['awaiting_approval', 'Aguardando aprovação'], ['approved', 'Prontas'], ['scheduled', 'Agendadas'], ['paused', 'Pausadas'],
@@ -19,12 +20,13 @@ const EDITABLE = ['pending', 'awaiting_approval', 'approved', 'scheduled', 'fail
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 type SendChoice = 'default' | 'preview' | 'image';
-type Draft = {id?: number; product_id: string; group_name: string; scheduled: string; message: string; force_repost: boolean; send_mode: SendChoice};
+type Draft = {id?: number; product_id: string; product?: Product | null; group_name: string; scheduled: string; message: string; force_repost: boolean; send_mode: SendChoice};
+// Ações em massa que cada aba permite (todas as publicações de uma aba têm o mesmo estado).
+const CAN_APPROVE = ['awaiting_approval', 'scheduled', 'failed'], CAN_CANCEL = ['awaiting_approval', 'approved', 'scheduled', 'paused', 'failed'], CAN_DELETE = ['failed', 'cancelled'];
 
 function PublicationDialog({draft, onClose, onSaved, onError}: {draft: Draft | null; onClose: () => void; onSaved: (text: string) => void; onError: (text: string) => void}) {
-  const [value, setValue] = useState<Draft | null>(draft), [products, setProducts] = useState<Product[]>([]), [busy, setBusy] = useState(false);
+  const [value, setValue] = useState<Draft | null>(draft), [busy, setBusy] = useState(false);
   useEffect(() => { setValue(draft); }, [draft]);
-  useEffect(() => { if (draft && !draft.id) api.get<Product[]>('/products', {params: {status: 'processed', limit: 200}}).then(r => setProducts(r.data)).catch(() => {}); }, [draft]);
   if (!value) return null;
   const set = (patch: Partial<Draft>) => setValue({...value, ...patch});
   const loadStandard = () => api.get(`/publications/preview/${value.product_id}`).then(r => set({message: r.data.message})).catch(e => onError(apiError(e, 'Falha ao gerar o texto padrão.')));
@@ -47,10 +49,8 @@ function PublicationDialog({draft, onClose, onSaved, onError}: {draft: Draft | n
   return <Dialog open onClose={onClose} maxWidth="md" fullWidth>
     <DialogTitle>{value.id ? 'Editar publicação' : 'Nova publicação'}</DialogTitle>
     <DialogContent><Stack spacing={2} sx={{pt: 1}}>
-      {!value.id && <TextField select label="Produto" value={value.product_id} onChange={e => set({product_id: e.target.value, message: ''})}>
-        <MenuItem value="">Selecione</MenuItem>{products.map(p => <MenuItem value={String(p.id)} key={p.id}>{p.title || `Produto ${p.id}`}</MenuItem>)}
-      </TextField>}
-      <TextField label="Grupo do WhatsApp (nome exato)" value={value.group_name} onChange={e => set({group_name: e.target.value})}/>
+      {!value.id && <ProductPicker value={value.product ?? null} onChange={p => set({product: p, product_id: p ? String(p.id) : '', message: ''})}/>}
+      <GroupPicker value={value.group_name} onChange={v => set({group_name: v})} helperText="Vazio usa o grupo padrão das Configurações."/>
       <TextField select label="Forma de envio" value={value.send_mode} onChange={e => set({send_mode: e.target.value as SendChoice})}
         helperText="Padrão = o da campanha ou, para ofertas avulsas, o das Configurações.">
         <MenuItem value="default">Padrão</MenuItem>
@@ -143,20 +143,25 @@ export default function QueuePage() {
   };
   const editDraft = (p: Publication): Draft => ({id: p.id, product_id: String(p.product_id), group_name: p.group_name, scheduled: toLocalInput(p.scheduled_at), message: p.message, force_repost: false,
     send_mode: p.send_mode_choice ?? 'default'});
-  const selectable = list.items.filter(p => [...EDITABLE, 'paused'].includes(p.status)).map(p => p.id);
-  const chosen = list.items.filter(p => checked.includes(p.id));
-  const canApprove = chosen.filter(p => ['pending', 'awaiting_approval', 'failed'].includes(p.status) || (p.status === 'scheduled' && !p.approved_at));
+  const listParams = {status: tab, group_name: group || undefined, campaign_id: campaign || undefined, q: search || undefined};
+  const selectable = tab === 'sent' ? [] : list.items.map(p => p.id);   // enviadas não têm ação em massa
+  const pageSelected = selectable.length > 0 && selectable.every(id => checked.includes(id));
   const bulkCancel = async () => {
-    if (!await confirm.ask(`Remover ${checked.length} publicação(ões) da fila?`, 'Elas ficam na aba Canceladas e não serão enviadas.', 'Remover da fila')) return;
-    run(async () => { const r = await api.post('/publications/bulk/cancel', {ids: checked}); setChecked([]); setNotice(`${r.data.cancelled} publicação(ões) removida(s) da fila.`); }, 'Falha ao remover da fila.');
+    if (!await confirm.ask(`Remover ${checked.length} publicação(ões) da fila?`, 'Elas vão para a aba Canceladas e não serão enviadas.', 'Remover da fila')) return;
+    run(async () => { const r = await inBatches(checked, chunk => api.post('/publications/bulk/cancel', {ids: chunk})); setChecked([]); setNotice(`${r.cancelled ?? 0} publicação(ões) removida(s) da fila.`); }, 'Falha ao remover da fila.');
   };
-  const bulkApprove = () => run(async () => { const r = await api.post('/publications/bulk/approve', {ids: canApprove.map(p => p.id)}); setChecked([]);
-    setNotice(tab === 'failed' ? `${r.data.length} publicação(ões) liberada(s) para reenviar.` : `${r.data.length} publicação(ões) aprovada(s).`); }, 'Falha ao aprovar em lote.');
+  const bulkApprove = () => run(async () => { const r = await inBatches(checked, chunk => api.post('/publications/bulk/approve', {ids: chunk})); setChecked([]);
+    setNotice(tab === 'failed' ? `${r.count ?? 0} publicação(ões) liberada(s) para reenviar.` : `${r.count ?? 0} publicação(ões) aprovada(s).`); }, 'Falha ao aprovar em lote.');
+  const bulkDelete = async () => {
+    if (!await confirm.ask(`Excluir ${checked.length} publicação(ões)?`, 'Elas são apagadas de vez. Só canceladas e com falha podem ser excluídas; as enviadas ficam no histórico.', 'Excluir de vez')) return;
+    run(async () => { const r = await inBatches(checked, chunk => api.post('/publications/bulk/delete', {ids: chunk})); setChecked([]);
+      setNotice(`${r.deleted ?? 0} publicação(ões) excluída(s).${r.skipped ? ` ${r.skipped} não podiam ser excluídas.` : ''}`); }, 'Falha ao excluir.');
+  };
   const extReady = Boolean(ext?.whatsapp_tab);
 
   return <>
     <PageHeader title="Fila" description="Publicações do aprovado ao enviado. A extensão envia pela sua aba do WhatsApp Web."
-      actions={<Button variant="contained" onClick={() => setDraft({product_id: '', group_name: '', scheduled: '', message: '', force_repost: false, send_mode: 'default'})}>Nova publicação</Button>}/>
+      actions={<Button variant="contained" onClick={() => setDraft({product_id: '', product: null, group_name: '', scheduled: '', message: '', force_repost: false, send_mode: 'default'})}>Nova publicação</Button>}/>
     <Tabs value={tab} onChange={(_, v) => setParams({tab: v})} variant="scrollable" allowScrollButtonsMobile sx={{mb: 2, borderBottom: 1, borderColor: 'divider'}}>
       {TABS.map(([key, label]) => <Tab key={key} value={key} label={<Badge color={key === 'failed' ? 'error' : 'primary'} badgeContent={summary[key] || 0} max={999} sx={{pr: 2.25, '& .MuiBadge-badge': {fontWeight: 700}}}>{label}</Badge>}/>)}
     </Tabs>
@@ -191,7 +196,10 @@ export default function QueuePage() {
       {list.items.length > 1 && <ExpandAll onExpand={() => setExpanded(list.items.map(p => p.id))} onCollapse={() => setExpanded([])}/>}
       <Tooltip title="Atualizar lista"><IconButton aria-label="Atualizar lista" onClick={reloadAll}><RefreshIcon/></IconButton></Tooltip>
     </Stack>
-    {selectable.length > 0 && <SelectAll total={selectable.length} selected={checked.length} onAll={() => setChecked(selectable)} onNone={() => setChecked([])}/>}
+    {selectable.length > 0 && <SelectAll total={selectable.length} selected={selectable.filter(id => checked.includes(id)).length}
+      onAll={() => setChecked(c => [...new Set([...c, ...selectable])])} onNone={() => setChecked([])} label={`Selecionar as ${selectable.length} desta página`}/>}
+    <SelectMatching pageCount={selectable.length} pageSelected={pageSelected} selected={checked.length} total={list.total} noun="publicações"
+      onSelectAll={async () => setChecked(await fetchAllIds('/publications', listParams))} onClear={() => setChecked([])}/>
 
     <Feedback error={error || list.error} notice={notice} onRetry={list.error ? () => list.reload() : undefined} onClose={() => { setError(''); setNotice(''); list.setError(''); }}/>
     <Loading show={list.loading}/>
@@ -200,9 +208,8 @@ export default function QueuePage() {
     <Stack spacing={2}>{list.items.map(p => {
       const [label, color] = publicationLabel(p.status);
       return <Card key={p.id}><CardContent sx={{display: 'flex', gap: 3, flexDirection: {xs: 'column', md: 'row'}, p: {md: 2.5}, '&:last-child': {pb: {md: 2.5}}}}>
-        {selectable.includes(p.id) &&
-          <Checkbox sx={{alignSelf: 'flex-start', m: -1}} checked={checked.includes(p.id)} onChange={() => setChecked(c => c.includes(p.id) ? c.filter(x => x !== p.id) : [...c, p.id])} inputProps={{'aria-label': 'Selecionar publicação'}}/>}
-        <Collapse in={expanded.includes(p.id)} unmountOnExit sx={{flexShrink: 0}}><WhatsAppPreview message={p.message}/></Collapse>
+        {tab !== 'sent' && <Checkbox sx={{alignSelf: 'flex-start', m: -1}} checked={checked.includes(p.id)} onChange={() => setChecked(c => c.includes(p.id) ? c.filter(x => x !== p.id) : [...c, p.id])} inputProps={{'aria-label': 'Selecionar publicação'}}/>}
+        <Collapse in={expanded.includes(p.id)} unmountOnExit sx={{flexShrink: 0}}><WhatsAppPreview message={p.outgoing_message || p.message}/></Collapse>
         <Box flex={1} minWidth={0}>
           <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
             <Typography fontWeight={650} fontSize={16}>{p.product?.title || `Produto ${p.product_id}`}</Typography><Chip size="small" color={color} label={label}/>
@@ -227,15 +234,16 @@ export default function QueuePage() {
             {EDITABLE.includes(p.status) && <Button size="small" color="error" onClick={() => action(p, 'cancel')}>Cancelar</Button>}
             <Button size="small" onClick={() => setExpanded(e => e.includes(p.id) ? e.filter(x => x !== p.id) : [...e, p.id])} aria-expanded={expanded.includes(p.id)}>
               {expanded.includes(p.id) ? 'Ocultar mensagem' : 'Ver mensagem'}</Button>
-            {p.status === 'sent' && <Button size="small" onClick={() => setDraft({product_id: String(p.product_id), group_name: p.group_name, scheduled: '', message: '', force_repost: true, send_mode: p.send_mode_choice ?? 'default'})}>Repostar</Button>}
+            {p.status === 'sent' && <Button size="small" onClick={() => setDraft({product_id: String(p.product_id), product: p.product ? (p.product as unknown as Product) : null, group_name: p.group_name, scheduled: '', message: '', force_repost: true, send_mode: p.send_mode_choice ?? 'default'})}>Repostar</Button>}
           </Stack>
         </Box>
       </CardContent></Card>;
     })}</Stack>
     <LoadMore show={list.hasMore} loading={list.loading} onClick={list.loadMore}/>
     <BulkBar count={checked.length} noun="publicação(ões) selecionada(s)" onClear={() => setChecked([])}>
-      {canApprove.length > 0 && <Button size="small" variant="outlined" onClick={bulkApprove}>{tab === 'failed' ? `Reenviar (${canApprove.length})` : `Aprovar (${canApprove.length})`}</Button>}
-      <Button size="small" variant="outlined" onClick={bulkCancel}>Remover da fila</Button>
+      {CAN_APPROVE.includes(tab) && <Button size="small" variant="outlined" onClick={bulkApprove}>{tab === 'failed' ? 'Liberar para reenviar' : 'Aprovar'}</Button>}
+      {CAN_CANCEL.includes(tab) && <Button size="small" variant="outlined" onClick={bulkCancel}>Remover da fila</Button>}
+      {CAN_DELETE.includes(tab) && <Button size="small" variant="outlined" startIcon={<DeleteIcon/>} onClick={bulkDelete}>Excluir de vez</Button>}
     </BulkBar>
     {confirm.dialog}
     <PublicationDialog draft={draft} onClose={() => setDraft(null)} onError={setError}

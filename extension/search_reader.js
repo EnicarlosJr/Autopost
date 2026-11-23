@@ -37,6 +37,7 @@ function readSearchPage() {
     const fromFilter = (url.searchParams.get('pdp_filters') || '').match(/item_id:?(MLB\d+)/i);
     const fromPath = url.pathname.match(/(MLBU?)-?(\d{6,})/i);
     const externalId = fromFilter ? fromFilter[1] : fromPath ? `${fromPath[1]}${fromPath[2]}` : '';
+    const catalogId = (url.pathname.match(/\/p\/(MLB\d+)/i) || [])[1] || '';
     if (!externalId) continue;
     const priceBox = card.querySelector('.poly-component__price, .poly-price');
     const current = priceBox?.querySelector('.poly-price__current .andes-money-amount, .andes-money-amount:not(.andes-money-amount--previous)');
@@ -61,6 +62,7 @@ function readSearchPage() {
       rating,
       sold: sold(review?.textContent || card.textContent),
       free_shipping: /gr[aá]tis/i.test(shipping),
+      catalog_product_id: catalogId.toUpperCase() || null,
     });
   }
   return {blocked: false, items, source: 'cartões'};
@@ -128,10 +130,21 @@ function readSearchPage() {
           official_store: Boolean(meta.signal?.official_store),
           fulfillment: meta.signal?.ship_logistics === 'full' || /\bfull\b/i.test(shippingText),
           ml_category_id: /^MLB\d+$/.test(meta.category_id || '') ? meta.category_id : null,
+          catalog_product_id: catalogOf(meta),
         });
       }
     }
     return out;
+  }
+
+  // Produto de catálogo (/p/MLB...): o mesmo produto vendido por lojas diferentes. Usado para agrupar parecidos.
+  function catalogOf(meta) {
+    for (const value of [meta.product_id, meta.catalog_product_id]) {
+      const id = String(value || '').toUpperCase();
+      if (/^MLB\d+$/.test(id) && id !== String(meta.id || '').toUpperCase()) return id;
+    }
+    const fromUrl = String(meta.url || meta.permalink || '').match(/\/p\/(MLB\d+)/i);
+    return fromUrl ? fromUrl[1].toUpperCase() : null;
   }
 }
 

@@ -162,3 +162,51 @@ def test_trust_filters_reject_low_quality_listings(env):
     assert reasons == {"MLB21": 'baixa confiabilidade ("banhada")', "MLB22": "menos de 500 vendidos",
                        "MLB23": "não é loja oficial nem Full", "MLB24": "", "MLB25": 'baixa confiabilidade ("1a linha")'}
     assert next(r for r in rows if r["external_id"] == "MLB24")["official_store"] is True
+
+def test_similar_results_are_grouped_and_best_skips_repeats(env):
+    client, _ = env
+    _, camp = _setup(client)
+    cid = camp["id"]
+    s = client.post(f"/api/campaigns/{cid}/searches", json={"keywords": ["ssd"], "categories": [{"id": "MLB1648", "include_children": True}]}).json()
+    client.get("/api/campaign-searches/due")
+    items = [_item(11, "MLB1672", title="SSD Kingston NV2 480GB M.2", price=219.9, seller="Loja A"),
+             _item(12, "MLB1672", title="Ssd Kingston Nv2 480 Gb M2 Nvme", price=199.9, seller="Loja B"),        # mesmo produto, mais barato
+             _item(13, "MLB1672", title="SSD WD Green 480GB", price=189.9, catalog_product_id="MLB900", seller="Loja C"),
+             _item(14, "MLB1672", title="Wd Green Ssd Sata 480 Gb", price=185.0, catalog_product_id="mlb900", seller="Loja D"),
+             _item(15, "MLB1672", title="SSD Kingston NV2 1TB", price=399.9, seller="Loja A")]                   # outra capacidade
+    client.post(f"/api/campaign-searches/{s['id']}/results", json={"items": items})
+    results = {r["external_id"]: r for r in client.get(f"/api/campaigns/{cid}/searches/{s['id']}/results").json()}
+    assert results["MLB11"]["group_key"] == results["MLB12"]["group_key"] and results["MLB12"]["group_size"] == 2
+    assert results["MLB12"]["group_best"] and results["MLB12"]["cheapest"] and not results["MLB11"]["group_best"]
+    assert results["MLB13"]["group_key"] == results["MLB14"]["group_key"] and results["MLB14"]["group_best"]
+    assert results["MLB15"]["group_size"] == 1 and results["MLB15"]["group_best"]
+    ids = {r["listing_id"]: r["external_id"] for r in results.values()}
+    best = client.post(f"/api/campaigns/{cid}/searches/{s['id']}/best", json={"count": 10}).json()
+    assert {ids[i] for i in best["listing_ids"]} == {"MLB12", "MLB14", "MLB15"} and best["groups"] == 3
+    # Com um deles na campanha, o grupo inteiro deixa de ser sugerido e os parecidos ganham o aviso.
+    client.post(f"/api/campaigns/{cid}/products", json={"listing_ids": [results["MLB12"]["listing_id"]], "search_id": s["id"]})
+    best = client.post(f"/api/campaigns/{cid}/searches/{s['id']}/best", json={"count": 10}).json()
+    assert {ids[i] for i in best["listing_ids"]} == {"MLB14", "MLB15"}
+    after = {r["external_id"]: r for r in client.get(f"/api/campaigns/{cid}/searches/{s['id']}/results").json()}
+    assert after["MLB11"]["similar_in_campaign"] and after["MLB12"]["in_campaign"] and not after["MLB12"]["similar_in_campaign"]
+
+def test_one_search_per_niche_with_its_own_audience(env):
+    client, _ = env
+    niche, camp = _setup(client)
+    cid = camp["id"]
+    words = [f"tênis modelo {i}" for i in range(12)]
+    shoes = client.post("/api/niches", json={"name": "Tênis", "categories": [{"id": "MLB1648", "include_children": True}],
+                                             "include_keywords": words, "exclude_keywords": ["infantil"], "gender": "male"}).json()
+    empty = client.post("/api/niches", json={"name": "Vazio"}).json()
+    r = client.post(f"/api/campaigns/{cid}/searches/by-niches",
+                    json={"niche_ids": [niche["id"], shoes["id"], empty["id"]], "filters": {"min_discount": 15, "gender": "female"}})
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["skipped"] == ["Vazio"] and len(body["searches"]) == 3          # Tênis tem 12 palavras: duas buscas
+    by_niche = {}
+    for s in body["searches"]:
+        by_niche.setdefault(s["niche_name"], []).append(s)
+    assert by_niche["Informática"][0]["keywords"] == ["ssd", "memória ram"] and by_niche["Informática"][0]["filters"]["gender"] == "any"
+    assert [len(s["keywords"]) for s in by_niche["Tênis"]] == [10, 2]
+    assert all(s["filters"]["gender"] == "male" and s["filters"]["min_discount"] == 15 and s["exclude_keywords"] == ["infantil"]
+               and s["categories"][0]["id"] == "MLB1648" and s["status"] == "queued" for s in by_niche["Tênis"])

@@ -34,8 +34,12 @@ type Form = {niche_id: number | null; niche_name: string; categories: OfficialCa
 /** "Buscar produtos para esta campanha": formulário, histórico e resultados com seleção. */
 const MAX_TERMS = 10;   // a extensão lê até 10 palavras por busca
 
-export default function CampaignSearchPanel({campaignId, defaults, niches = [], onAdded}: {campaignId: number; defaults: Omit<Form, 'filters'> & {gender?: Gender};
-  niches?: Niche[]; onAdded: () => void}) {
+const MINUTES_PER_SEARCH = 1.5;   // medido na prática: cada busca de nicho (até 10 palavras) leva cerca de 1,5 min
+
+export default function CampaignSearchPanel({campaignId, defaults, niches = [], chosenNiches = [], onChooseNiches, onAdded}: {campaignId: number;
+  defaults: Omit<Form, 'filters'> & {gender?: Gender};
+  /** Todos os nichos do perfil; os marcados (chosenNiches) entram em "Buscar nos nichos marcados". */
+  niches?: Niche[]; chosenNiches?: number[]; onChooseNiches?: (ids: number[]) => void; onAdded: () => void}) {
   const [form, setForm] = useState<Form>(() => { const {gender, ...rest} = defaults;
     return {...rest, keywords: rest.keywords.slice(0, MAX_TERMS), filters: {...EMPTY_FILTERS, gender: gender ?? 'any'}}; });
   const [history, setHistory] = useState<CampaignSearch[]>([]), [current, setCurrent] = useState<number | null>(null);
@@ -44,6 +48,9 @@ export default function CampaignSearchPanel({campaignId, defaults, niches = [], 
   // Parecidos: por padrão só o melhor de cada grupo aparece; "+N parecidos" abre o grupo.
   const [oldPicked, setOldPicked] = useState<number[]>([]); const confirm = useConfirm();
   const [grouped, setGrouped] = useState(true), [open, setOpen] = useState<number[]>([]), [bestCount, setBestCount] = useState(10);
+  const [perSearch, setPerSearch] = useState(10);
+  const chosen = niches.filter(n => chosenNiches.includes(n.id));
+  const toggleNiche = (id: number) => onChooseNiches?.(chosenNiches.includes(id) ? chosenNiches.filter(x => x !== id) : [...chosenNiches, id]);
   const set = (patch: Partial<Form>) => setForm(f => ({...f, ...patch}));
   const lastDefaults = useRef('');
   useEffect(() => {   // nichos/categorias mudaram na etapa anterior: atualiza o formulário
@@ -96,7 +103,11 @@ export default function CampaignSearchPanel({campaignId, defaults, niches = [], 
     catch (e) { setError(apiError(e, 'Não foi possível repetir a busca.')); }
   };
   const removeSearches = async (ids: number[]) => {
-    if (!await confirm.ask(`Excluir ${ids.length} busca(s) do histórico?`, 'Os resultados delas são apagados. Produtos já adicionados continuam na campanha.', 'Excluir')) return;
+    const finished = history.filter(s => ids.includes(s.id) && ['done', 'no_results'].includes(s.status));
+    const waiting = history.filter(s => ids.includes(s.id) && s.status === 'queued').length;
+    const detail = [finished.length ? `${finished.length} já terminaram: os resultados delas (${finished.reduce((n, s) => n + s.matched_count, 0)} anúncios nos filtros) são apagados e não dá para desfazer.` : '',
+      waiting ? `${waiting} ainda estão na fila e não vão mais rodar.` : '', 'Produtos já adicionados continuam na campanha.'].filter(Boolean).join(' ');
+    if (!await confirm.ask(`Excluir ${ids.length} busca(s) do histórico?`, detail, finished.length ? `Excluir e apagar resultados` : 'Excluir')) return;
     try {
       const r = await api.post(`/campaigns/${campaignId}/searches/remove`, {ids});
       setNotice(`${r.data.deleted} busca(s) excluída(s).${r.data.skipped ? ` ${r.data.skipped} em andamento ficaram.` : ''}`);
@@ -114,7 +125,7 @@ export default function CampaignSearchPanel({campaignId, defaults, niches = [], 
     setBusy(true); setError(''); setNotice('');
     try {
       const r = await api.post<{searches: CampaignSearch[]; skipped: string[]}>(`/campaigns/${campaignId}/searches/by-niches`,
-        {niche_ids: niches.map(n => n.id), filters: form.filters});
+        {niche_ids: chosen.map(n => n.id), filters: form.filters});
       setHistory(h => [...r.data.searches, ...h]);
       runSearches().catch(() => {});
       setNotice(`${r.data.searches.length} busca(s) na fila, uma por nicho, cada uma com o público do próprio nicho. Os resultados aparecem no histórico abaixo.`
@@ -143,6 +154,20 @@ export default function CampaignSearchPanel({campaignId, defaults, niches = [], 
         : 'Não há produtos novos para sugerir: os desta busca já estão na campanha ou ficaram fora dos filtros.');
     } catch (e) { setError(apiError(e, 'Não foi possível escolher os melhores.')); }
   };
+  /** Adiciona os melhores de cada busca concluída, sem repetir produto entre as buscas. */
+  const addBestFromAll = async () => {
+    setError(''); setNotice(''); setBusy(true);
+    try {
+      const r = await api.post<{added: number; searches: {niche_name: string; terms: string[]; added: number}[]}>(`/campaigns/${campaignId}/searches/best-all`, {per_search: perSearch});
+      const parts = r.data.searches.filter(s => s.added).map(s => `${s.niche_name || s.terms.slice(0, 2).join(', ')}: ${s.added}`);
+      setNotice(r.data.added ? `${r.data.added} produto(s) adicionado(s) à campanha (${parts.join('; ')}). Confira na etapa Seleção dos produtos.`
+        : 'Nenhum produto novo: os melhores dessas buscas já estão na campanha.');
+      onAdded(); loadHistory(); if (current) loadResults(current);
+    } catch (e) { setError(apiError(e, 'Não foi possível adicionar os melhores.')); }
+    finally { setBusy(false); }
+  };
+  const waiting = history.filter(s => s.status === 'queued' || s.status === 'running').length;
+  const finishedCount = history.filter(s => s.status === 'done').length;
   const groupOf = (r: SearchResult) => r.group_key ?? r.listing_id;
   const hiddenSimilar = (r: SearchResult) => grouped && r.matched && r.group_best === false && !open.includes(groupOf(r));
   const shown = results.filter(r => (r.matched || showRejected) && !hiddenSimilar(r));
@@ -158,12 +183,23 @@ export default function CampaignSearchPanel({campaignId, defaults, niches = [], 
       {niches.length > 0 && <Box mb={2.5} pb={2} sx={{borderBottom: `1px solid ${tokens.line}`}}>
         <Stack direction={{xs: 'column', sm: 'row'}} gap={1} justifyContent="space-between" alignItems={{sm: 'center'}} mb={1}>
           <Box>
-            <Typography fontWeight={650}>Nichos desta campanha ({niches.length})</Typography>
-            <Typography variant="body2" color="text.secondary">Uma busca para cada nicho, cada uma com as palavras, categorias e o público dele. Os filtros abaixo valem para todas.</Typography>
+            <Typography fontWeight={650}>Buscar pelos nichos</Typography>
+            <Typography variant="body2" color="text.secondary">Marque os nichos. Cada um vira uma busca com as palavras, categorias e o público dele.
+              A confiabilidade e os filtros de preço abaixo valem para todas.</Typography>
           </Box>
-          <Button variant="contained" disabled={busy} onClick={searchAllNiches} sx={{flexShrink: 0}}>Buscar em todos os nichos ({niches.length})</Button>
+          <Button variant="contained" disabled={busy || !chosen.length} onClick={searchAllNiches} sx={{flexShrink: 0}}>
+            {chosen.length ? `Buscar nos ${chosen.length} nicho(s) marcado(s)` : 'Marque os nichos'}</Button>
         </Stack>
-        <Typography variant="caption" display="block" mb={.5}>Ou preencha a busca abaixo com um nicho:</Typography>
+        <Stack direction="row" gap={.75} flexWrap="wrap" mb={1}>
+          {niches.map(n => { const on = chosenNiches.includes(n.id);
+            return <Chip key={n.id} clickable color={on ? 'primary' : 'default'} variant={on ? 'filled' : 'outlined'}
+              label={`${on ? '✓ ' : ''}${n.favorite ? '★ ' : ''}${n.name}`} onClick={() => toggleNiche(n.id)}/>; })}
+          {niches.length > 1 && <Button size="small" onClick={() => onChooseNiches?.(chosen.length === niches.length ? [] : niches.map(n => n.id))}>
+            {chosen.length === niches.length ? 'Desmarcar todos' : 'Marcar todos'}</Button>}
+        </Stack>
+        {chosen.length > 0 && <Typography variant="caption" display="block" mb={1}>
+          Leva cerca de {Math.ceil(chosen.length * MINUTES_PER_SEARCH)} min ({MINUTES_PER_SEARCH.toString().replace('.', ',')} min por nicho). Pode continuar nas outras etapas enquanto isso.</Typography>}
+        <Typography variant="caption" display="block" mb={.5}>Ou preencha a busca manual abaixo com um nicho:</Typography>
         <Stack direction="row" gap={.75} flexWrap="wrap">{niches.map(n => <Chip key={n.id} size="small" clickable
           color={form.niche_id === n.id ? 'primary' : 'default'} variant={form.niche_id === n.id ? 'filled' : 'outlined'}
           label={`${n.favorite ? '★ ' : ''}${n.name}`} onClick={() => fromNiche(n)}/>)}</Stack>
@@ -241,7 +277,10 @@ export default function CampaignSearchPanel({campaignId, defaults, niches = [], 
 
     <Box>
       <Stack direction="row" justifyContent="space-between" alignItems="center" mb={1}>
-        <Typography fontWeight={650}>Buscas desta campanha ({history.length})</Typography>
+        <Box>
+          <Typography fontWeight={650}>Buscas desta campanha ({history.length})</Typography>
+          {waiting > 0 && <Typography variant="caption" color="info.main">Faltam {waiting} busca(s), cerca de {Math.ceil(waiting * MINUTES_PER_SEARCH)} min. A lista se atualiza sozinha.</Typography>}
+        </Box>
         <Stack direction="row" gap={.5} alignItems="center">
           {history.length > 0 && <SelectAll total={history.length} selected={oldPicked.length} onAll={() => setOldPicked(history.map(s => s.id))} onNone={() => setOldPicked([])} label="Todas"/>}
           {oldPicked.length > 0 && <Button size="small" color="error" startIcon={<DeleteIcon/>} onClick={() => removeSearches(oldPicked)}>Excluir {oldPicked.length}</Button>}
@@ -268,7 +307,20 @@ export default function CampaignSearchPanel({campaignId, defaults, niches = [], 
               {s.status !== 'running' && <Button size="small" color="error" onClick={() => removeSearches([s.id])}>Excluir</Button>}
             </Stack>
           </Stack>; })}</Card>}
-      {pending && <LinearProgress sx={{mt: 1}}/>}
+      {pending && <LinearProgress sx={{mt: 1}} variant={history.length ? 'determinate' : 'indeterminate'}
+        value={history.length ? (history.length - waiting) * 100 / history.length : undefined}/>}
+      {finishedCount > 0 && <Card variant="outlined" sx={{p: 1.5, mt: 1.5, bgcolor: tokens.paper}}>
+        <Stack direction={{xs: 'column', sm: 'row'}} gap={1.5} alignItems={{sm: 'center'}}>
+          <Box flex={1}>
+            <Typography fontWeight={600} fontSize={14.5}>Montar a campanha com os melhores</Typography>
+            <Typography variant="body2" color="text.secondary">Pega os melhores de cada uma das {finishedCount} busca(s) concluída(s): um por produto, sem repetir o que
+              já está na campanha e variando categoria e loja.{waiting ? ' As que ainda estão rodando entram se você clicar de novo depois.' : ''}</Typography>
+          </Box>
+          <TextField size="small" type="number" label="Por busca" value={perSearch} sx={{width: 100}}
+            onChange={e => setPerSearch(Math.max(1, Math.min(100, Number(e.target.value) || 1)))}/>
+          <Button variant="contained" disabled={busy} onClick={addBestFromAll}>Adicionar até {perSearch * finishedCount}</Button>
+        </Stack>
+      </Card>}
     </Box>
 
     {active && <Box>

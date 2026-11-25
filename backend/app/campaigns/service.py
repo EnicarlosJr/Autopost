@@ -364,6 +364,24 @@ def done_pairs(db: Session, c: Campaign) -> dict[tuple[int, str], bool]:
     return {(pid, g): True for pid, g in rows}
 
 
+def group_limit_overflow(db: Session, c: Campaign, pairs: list, times: list) -> list[dict]:
+    """Grupos em que a campanha programa, num mesmo dia, mais anúncios do que o limite diário do cadastro do grupo.
+    O limite do cadastro não trava a campanha (ela usa "Limite por grupo por dia"); aqui só avisamos."""
+    registry = group_registry(db)
+    zone = local_zone()
+    per_day: dict[tuple, int] = {}
+    for (_, g), at in zip(pairs, times):
+        k = (g, at.astimezone(zone).date())
+        per_day[k] = per_day.get(k, 0) + 1
+    out = []
+    for g in dict.fromkeys(g for g, _ in per_day):
+        reg = registry.get(g)
+        top = max(n for (gg, _), n in per_day.items() if gg == g)
+        if reg and reg.max_per_day and top > reg.max_per_day:
+            out.append({"group": g, "limit": reg.max_per_day, "max_day": top})
+    return out
+
+
 def plan(db: Session, c: Campaign) -> dict:
     """Prévia completa: o que seria agendado agora com esta configuração (não grava nada)."""
     errors = validate(c)
@@ -380,8 +398,13 @@ def plan(db: Session, c: Campaign) -> dict:
         per_group[g] = per_group.get(g, 0) + 1
     if times and times[-1] - times[0] > timedelta(days=30):
         warnings.append("A campanha levaria mais de 30 dias para terminar. Aumente o ritmo ou reduza a quantidade.")
+    over = group_limit_overflow(db, c, pairs, times)
+    for item in over:
+        warnings.append(f'O grupo "{item["group"]}" tem limite de {item["limit"]} por dia no cadastro, mas esta campanha '
+                        f'programa até {item["max_day"]} num mesmo dia. Para respeitar, use "Limite por grupo por dia" '
+                        f'(a campanha dura mais dias) ou aumente o limite em Grupos.')
     return {
-        "errors": errors, "warnings": warnings,
+        "errors": errors, "warnings": warnings, "group_limits": over,
         "matching": len(products), "selected": len({p.id for p, _ in pairs}), "messages": len(pairs),
         "per_group": [{"group": g, "count": n} for g, n in per_group.items()],
         "start": times[0].isoformat() if times else None, "end": times[-1].isoformat() if times else None,

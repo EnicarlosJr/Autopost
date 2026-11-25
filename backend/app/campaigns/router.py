@@ -43,8 +43,9 @@ class CampaignWrite(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     niche_ids: list[int] = Field(default_factory=list, max_length=20)
     ml_categories: list[OfficialCategory] = Field(default_factory=list, max_length=200)
-    include_keywords: list[str] = Field(default_factory=list, max_length=50)
-    exclude_keywords: list[str] = Field(default_factory=list, max_length=50)
+    # Vários nichos juntos passam fácil de 50 palavras; a busca por nicho usa as palavras de cada nicho.
+    include_keywords: list[str] = Field(default_factory=list, max_length=300)
+    exclude_keywords: list[str] = Field(default_factory=list, max_length=300)
     product_ids: list[int] = Field(default_factory=list, max_length=1000)
     categories: list[str] = Field(default_factory=list, max_length=50)
     exclude_categories: list[str] = Field(default_factory=list, max_length=50)
@@ -560,6 +561,35 @@ def best_results(campaign_id: int, search_id: int, data: BestPick, db: Session =
     ids = ranking.pick_best(offers, groups, data.count, per_category=data.per_category, per_seller=data.per_seller)
     available = sum(1 for o in offers if o.id > 0 and groups[o.id].best and not groups[o.id].taken)
     return {"listing_ids": ids, "available": available, "groups": len({g.key for k, g in groups.items() if k > 0})}
+
+
+class BestAll(BaseModel):
+    per_search: int = Field(default=10, ge=1, le=100)
+    search_ids: list[int] = Field(default_factory=list, max_length=200)   # vazio = todas as concluídas
+
+
+@router.post("/{campaign_id}/searches/best-all")
+def best_from_all(campaign_id: int, data: BestAll, db: Session = Depends(get_db), user: User = Depends(require_user)):
+    """Adiciona à campanha os melhores de cada busca concluída (um por grupo de parecidos, variando categoria e loja).
+    É a ação do botão "Adicionar os melhores de cada busca": o clique do usuário é a confirmação.
+    Cada busca já enxerga o que as anteriores adicionaram, então o mesmo produto não entra duas vezes."""
+    c = _get(db, campaign_id, user)
+    if c.status == "cancelled":
+        raise HTTPException(409, "Campanha cancelada.")
+    stmt = select(CampaignSearch).where(CampaignSearch.campaign_id == c.id, CampaignSearch.status == "done")
+    if data.search_ids:
+        stmt = stmt.where(CampaignSearch.id.in_(data.search_ids))
+    report, total = [], 0
+    for s in db.scalars(stmt.order_by(CampaignSearch.id)).all():
+        rows = db.execute(select(CampaignSearchResult, Listing).join(Listing, Listing.id == CampaignSearchResult.listing_id)
+                          .where(CampaignSearchResult.search_id == s.id, CampaignSearchResult.matched.is_(True))).all()
+        groups, offers = _grouping(db, s, rows)
+        ids = ranking.pick_best(offers, groups, data.per_search)
+        added = search_service.add_listings(db, c, ids, s.id)["added"] if ids else 0
+        total += added
+        report.append({"search_id": s.id, "niche_name": s.niche_name, "terms": search_service.terms_of(s), "added": added})
+    db.commit()
+    return {"added": total, "searches": report}
 
 
 @router.get("/{campaign_id}/products")

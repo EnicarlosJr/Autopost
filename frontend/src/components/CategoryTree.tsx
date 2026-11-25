@@ -13,9 +13,13 @@ export function OfficialChip({cat, onDelete, onToggleChildren}: {cat: CategoryPi
     label={<Box component="span" sx={{display: 'inline-flex', alignItems: 'center', gap: .75, flexWrap: 'wrap'}}>
       <Box component="span" sx={{fontSize: 10.5, fontWeight: 800, px: .6, borderRadius: 1, bgcolor: tokens.paper, color: tokens.muted}}>ML</Box>
       <span title={cat.path}>{cat.name || cat.id}</span>
-      {!cat.is_leaf && onToggleChildren && <Box component="span" onClick={e => { e.stopPropagation(); onToggleChildren(); }}
-        sx={{fontSize: 11.5, color: cat.include_children ? 'success.main' : 'text.secondary', cursor: 'pointer', textDecoration: 'underline dotted'}}>
-        {cat.include_children ? '+ subcategorias' : 'só esta'}</Box>}
+      {!cat.is_leaf && onToggleChildren && <Tooltip title={cat.include_children ? 'Clique para usar só esta categoria, sem as subcategorias' : 'Clique para incluir as subcategorias'}>
+        <Box component="span" role="switch" aria-checked={cat.include_children} tabIndex={0}
+          onClick={e => { e.stopPropagation(); onToggleChildren(); }}
+          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onToggleChildren(); } }}
+          sx={{fontSize: 11.5, px: .75, borderRadius: 5, cursor: 'pointer', border: '1px solid',
+            color: cat.include_children ? 'success.main' : 'text.secondary', borderColor: cat.include_children ? 'success.main' : tokens.line}}>
+          {cat.include_children ? '✓ com subcategorias' : 'só esta categoria'}</Box></Tooltip>}
       {cat.active === false && <Box component="span" sx={{fontSize: 11, color: 'warning.main'}}>inativa</Box>}
     </Box>}/>;
 }
@@ -65,6 +69,25 @@ export default function CategoryTree({selected = [], onChange, height = 420}: Pr
       setFavorites(f => { const n = new Set(f); if (on) n.delete(c.id); else n.add(c.id); return n; }); }
     catch (e) { setError(apiError(e, 'Não foi possível atualizar a favorita.')); }
   };
+  /** Vários IDs colados de uma vez (ex.: "MLB23332, MLB31447 MLB188064"): marca todos. */
+  const pastedIds = [...new Set((query.toUpperCase().match(/MLB\d+/g) || []))];
+  const [adding, setAdding] = useState(false);
+  const addPasted = async () => {
+    if (!onChange) return;
+    setAdding(true); setError('');
+    const found: CategoryPick[] = [], missing: string[] = [];
+    for (const id of pastedIds) {
+      if (picked.has(id)) continue;
+      try {
+        const hit = (await api.get<MlCategory[]>('/ml-categories/search', {params: {q: id}})).data.find(c => c.id === id);
+        if (hit) found.push({id: hit.id, include_children: !hit.is_leaf, name: hit.name, path: hit.path, is_leaf: hit.is_leaf, active: hit.active});
+        else missing.push(id);
+      } catch { missing.push(id); }
+    }
+    onChange([...selected, ...found]);
+    setAdding(false);
+    if (missing.length) setError(`Não encontrei no catálogo: ${missing.join(', ')}.`); else setQuery('');
+  };
   const toggle = (c: MlCategory) => {
     if (!onChange) return;
     onChange(picked.has(c.id) ? selected.filter(s => s.id !== c.id)
@@ -106,9 +129,11 @@ export default function CategoryTree({selected = [], onChange, height = 420}: Pr
         onDelete={() => onChange!(selected.filter(x => x.id !== s.id))}
         onToggleChildren={() => onChange!(selected.map(x => x.id === s.id ? {...x, include_children: !x.include_children} : x))}/>)}</Stack>
     </Box>}
-    <TextField fullWidth size="small" placeholder="Pesquisar categoria pelo nome ou ID (ex.: SSD, MLB1672)" value={query} onChange={e => setQuery(e.target.value)}
+    <TextField fullWidth size="small" placeholder="Pesquisar pelo nome ou ID (ex.: SSD, MLB1672). Dá para colar vários IDs de uma vez." value={query} onChange={e => setQuery(e.target.value)}
       InputProps={{startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small"/></InputAdornment>,
         endAdornment: searching ? <CircularProgress size={16}/> : undefined}}/>
+    {selectable && pastedIds.length > 1 && <Button size="small" variant="contained" sx={{mt: 1}} disabled={adding} onClick={addPasted}>
+      {adding ? 'Marcando…' : `Marcar as ${pastedIds.length} categorias coladas`}</Button>}
     {error && <Typography color="error" fontSize={13} mt={1}>{error}</Typography>}
     <Box sx={{mt: 1, border: `1px solid ${tokens.line}`, borderRadius: 2, height, overflow: 'auto', p: .5}}>
       {results ? (results.length ? results.map(c => row(c, 0, true)) : <Typography p={2} color="text.secondary">Nenhuma categoria com esse nome.</Typography>)

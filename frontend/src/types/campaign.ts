@@ -23,6 +23,8 @@ export type CampaignPlan = {
   errors: string[]; warnings: string[]; matching: number; selected: number; messages: number;
   per_group: {group: string; count: number}[]; start: string | null; end: string | null; duration_minutes: number;
   items: {product_id: number; title: string; category: string; group: string; at: string}[];
+  /** Grupos em que a campanha passa do limite diário do cadastro do grupo (só aviso). */
+  group_limits?: {group: string; limit: number; max_day: number}[];
 };
 
 export type CampaignOptions = {

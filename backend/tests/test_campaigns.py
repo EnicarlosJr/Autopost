@@ -162,3 +162,20 @@ def test_options_and_queue_bulk_cancel(env):
     client.post(f"/api/campaigns/{c['id']}/confirm")
     ids = [p["id"] for p in client.get("/api/publications", params={"campaign_id": c["id"]}).json()]
     assert client.post("/api/publications/bulk/cancel", json={"ids": ids}).json() == {"cancelled": 2}
+
+def test_warns_when_campaign_passes_group_daily_limit(env):
+    client, _ = env
+    _seed(env[1], 30, "Academia")
+    client.put(f"/api/group-schedules/{GROUPS[0]}", json={"group_name": GROUPS[0], "categories": [], "active": True, "start_hour": 8,
+                                                          "end_hour": 22, "max_per_day": 12, "gap_minutes": 40, "repost_days": 7})
+    plan = _preview(client, groups=[{"group": GROUPS[0]}], total_limit=20, interval_minutes=10)
+    assert plan["group_limits"] == [{"group": GROUPS[0], "limit": 12, "max_day": 20}]
+    assert any("limite de 12 por dia" in w for w in plan["warnings"])
+    # Com "Limite por grupo por dia" = 12, cabe no cadastro e o aviso some (a campanha passa para o dia seguinte).
+    plan = _preview(client, groups=[{"group": GROUPS[0]}], total_limit=20, interval_minutes=10, group_daily_limit=12)
+    assert plan["group_limits"] == [] and plan["messages"] == 20
+
+def test_many_niche_keywords_are_accepted(env):
+    client, _ = env
+    words = [f"palavra {i}" for i in range(82)]
+    assert client.post("/api/campaigns/preview", json=_base(include_keywords=words)).status_code == 200

@@ -1,5 +1,5 @@
 import {Fragment, useCallback, useEffect, useMemo, useRef, useState} from 'react';
-import {Link, useNavigate, useParams, useSearchParams} from 'react-router-dom';
+import {Link, useLocation, useNavigate, useParams, useSearchParams} from 'react-router-dom';
 import {Alert, Autocomplete, Box, Button, Card, Checkbox, Chip, Collapse, FormControlLabel, InputAdornment, MenuItem, Radio, RadioGroup, Stack, Step,
   StepButton, Stepper, Switch, TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography, useMediaQuery} from '@mui/material';
 import {api, apiError} from '../services/api';
@@ -31,7 +31,9 @@ const PRESETS: [string, Partial<CampaignConfig>][] = [
 const toLocal = (iso: string | null) => { if (!iso) return ''; const d = new Date(iso); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
 const int = (v: string, min = 0) => Math.max(min, Math.floor(Number(v) || 0));
 
-function Summary({plan, loading, config}: {plan: CampaignPlan | null; loading: boolean; config: CampaignConfig}) {
+function Summary({plan, loading, config, productCount, onRespectLimit}: {plan: CampaignPlan | null; loading: boolean; config: CampaignConfig;
+  /** Produtos adicionados à campanha; null = campanha antiga, que usa filtros. */
+  productCount: number | null; onRespectLimit: (limit: number) => void}) {
   const stat = (value: number | string, label: string) => <Box>
     <Typography sx={{fontFamily: display, fontWeight: 750, fontSize: 26, lineHeight: 1.1}}>{value}</Typography>
     <Typography variant="body2" color="text.secondary">{label}</Typography></Box>;
@@ -39,7 +41,7 @@ function Summary({plan, loading, config}: {plan: CampaignPlan | null; loading: b
     <Typography fontWeight={650} mb={1.5}>Resumo da campanha</Typography>
     {!plan ? <Typography color="text.secondary" fontSize={14}>Calculando…</Typography> : <>
       <Box sx={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2, mb: 2}}>
-        {stat(plan.matching, 'produtos na campanha')}{stat(plan.messages, 'anúncios programados')}
+        {stat(productCount ?? plan.matching, 'produtos na campanha')}{stat(plan.messages, 'anúncios programados')}
         {stat(plan.selected, 'produtos usados')}{stat(plan.duration_minutes ? duration(plan.duration_minutes) : '0 min', 'duração prevista')}
       </Box>
       {plan.start && <Typography fontSize={14}>Início {dateTime(plan.start)}, término {dateTime(plan.end)}.</Typography>}
@@ -48,6 +50,9 @@ function Summary({plan, loading, config}: {plan: CampaignPlan | null; loading: b
         <Stack key={g.group} direction="row" justifyContent="space-between" fontSize={14}><Box sx={{overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', mr: 1}}>{g.group}</Box><b>{g.count}</b></Stack>)}</Stack>}
       {plan.errors.map(e => <Alert key={e} severity="error" sx={{mt: 1.5}}>{e}</Alert>)}
       {plan.warnings.map(w => <Alert key={w} severity="warning" sx={{mt: 1.5}}>{w}</Alert>)}
+      {(plan.group_limits?.length ?? 0) > 0 && <Button size="small" variant="outlined" sx={{mt: 1}}
+        onClick={() => onRespectLimit(Math.min(...plan.group_limits!.map(g => g.limit)))}>
+        Respeitar o limite do grupo ({Math.min(...plan.group_limits!.map(g => g.limit))} por dia)</Button>}
     </>}
   </Card>;
 }
@@ -61,6 +66,8 @@ export default function CampaignEditor() {
   const [options, setOptions] = useState<CampaignOptions>({categories: [], tags: [], uncategorized: 0, groups: []});
   const [plan, setPlan] = useState<CampaignPlan | null>(null), [planning, setPlanning] = useState(false);
   const [error, setError] = useState(''), [saving, setSaving] = useState(false);
+  const location = useLocation();
+  const [notice, setNotice] = useState<string>((location.state as {notice?: string} | null)?.notice ?? '');
   const [groupQuery, setGroupQuery] = useState(''), [newGroup, setNewGroup] = useState(''), [advanced, setAdvanced] = useState(false);
   const [campaignId, setCampaignId] = useState<number | null>(id ? Number(id) : null);
   const [niches, setNiches] = useState<Niche[]>([]), [products, setProducts] = useState<CampaignProductRow[]>([]), [removing, setRemoving] = useState<number[]>([]);
@@ -83,7 +90,20 @@ export default function CampaignEditor() {
   }, []);
   useEffect(() => { api.get<Niche[]>('/niches').then(r => setNiches(r.data)).catch(() => {}); }, []);
   useEffect(() => { if (campaignId) loadProducts(campaignId); }, [campaignId, loadProducts]);
-  useEffect(() => { api.get<CampaignOptions>('/campaigns/options').then(r => setOptions(r.data)).catch(e => setError(apiError(e, 'Não foi possível carregar categorias e grupos.'))); }, []);
+  const loadOptions = useCallback(() => api.get<CampaignOptions>('/campaigns/options').then(r => setOptions(r.data))
+    .catch(e => setError(apiError(e, 'Não foi possível carregar categorias e grupos.'))), []);
+  useEffect(() => { loadOptions(); }, [loadOptions]);
+  /** Liga um grupo desativado em Grupos sem sair da campanha, e já o marca nela. */
+  const activateGroup = async (name: string) => {
+    try {
+      const all = (await api.get<Record<string, unknown>[]>('/group-schedules')).data;
+      const current = all.find(g => g.group_name === name);
+      if (!current) throw new Error('Grupo não encontrado em Grupos.');
+      await api.put(`/group-schedules/${encodeURIComponent(name)}`, {...current, active: true});
+      await loadOptions();
+      if (!selected.has(name)) set({groups: [...config.groups, {group: name, limit: 0, categories: []}]});
+    } catch (e) { setError(apiError(e, 'Não foi possível ativar o grupo.')); }
+  };
   useEffect(() => {
     if (!id) return;
     api.get<Campaign>(`/campaigns/${id}`).then(r => {
@@ -152,10 +172,10 @@ export default function CampaignEditor() {
   const applyNiches = async (ids: number[]) => {
     try {
       const r = await api.get(`/campaigns/${campaignId ?? 0}/niche-defaults`, {params: {niche_ids: ids.join(',')}});
+      // As palavras-chave ficam no nicho: a busca por nicho usa as de cada um (até 10 por busca).
+      // Copiar todas para a campanha misturava os nichos e passava do limite com vários nichos juntos.
       const merged = new Map(config.ml_categories.map(c => [c.id, c])); (r.data.categories as OfficialCategory[]).forEach(c => merged.set(c.id, c));
-      set({niche_ids: ids, ml_categories: [...merged.values()],
-        include_keywords: [...new Set([...config.include_keywords, ...r.data.include_keywords])],
-        exclude_keywords: [...new Set([...config.exclude_keywords, ...r.data.exclude_keywords])]});
+      set({niche_ids: ids, ml_categories: [...merged.values()]});
     } catch (e) { setError(apiError(e, 'Não foi possível aplicar o nicho.')); }
   };
   const removeProducts = async (ids: number[]) => {
@@ -206,7 +226,8 @@ export default function CampaignEditor() {
   const nicheStep = <Stack gap={2.5}>
     <Box>
       <Typography fontWeight={600} mb={.5}>Nichos salvos no seu perfil</Typography>
-      <Typography variant="body2" color="text.secondary" mb={1.5}>Aplicar um nicho copia as categorias e palavras-chave para esta campanha. Mudanças aqui não alteram o nicho salvo.</Typography>
+      <Typography variant="body2" color="text.secondary" mb={1.5}>Marque os nichos desta campanha. Na próxima etapa, cada nicho vira uma busca com as próprias palavras,
+        categorias e público. Mudanças aqui não alteram o nicho salvo.</Typography>
       {niches.length ? <Stack direction="row" gap={.75} flexWrap="wrap">{niches.map(n => { const on = config.niche_ids.includes(n.id);
         return <Chip key={n.id} label={`${n.favorite ? '★ ' : ''}${n.name}`} color={on ? 'primary' : 'default'} variant={on ? 'filled' : 'outlined'}
           onClick={() => on ? set({niche_ids: config.niche_ids.filter(x => x !== n.id)}) : applyNiches([...config.niche_ids, n.id])}/>; })}</Stack>
@@ -222,7 +243,7 @@ export default function CampaignEditor() {
   </Stack>;
 
   const searchStep = campaignId ? <CampaignSearchPanel campaignId={campaignId} onAdded={() => loadProducts(campaignId)}
-    niches={niches.filter(n => config.niche_ids.includes(n.id))}
+    niches={niches} chosenNiches={config.niche_ids} onChooseNiches={ids => set({niche_ids: ids})}
     defaults={{niche_id: config.niche_ids[0] ?? null, niche_name: niches.find(n => n.id === config.niche_ids[0])?.name ?? '',
       categories: config.ml_categories, keywords: config.include_keywords, exclude_keywords: config.exclude_keywords,
       gender: niches.find(n => config.niche_ids.includes(n.id) && n.gender && n.gender !== 'any')?.gender ?? 'any'}}/>
@@ -312,6 +333,8 @@ export default function CampaignEditor() {
               <FormControlLabel sx={{flex: 1, minWidth: 0, mr: 0}} control={<Checkbox checked={on} disabled={!g.active && !on} onChange={() => toggleGroup(g.name)}/>}
                 label={<Box><Typography fontWeight={600} fontSize={14.5}>{g.name}{!g.active && ' (inativo)'}</Typography>
                   {config.strategy === 'category' && <Typography variant="caption">{[...(g.ml_categories || []).map(c => c.name || c.id), ...g.categories].join(', ') || 'Sem categorias no cadastro do grupo'}</Typography>}</Box>}/>
+              {!g.active && <Tooltip title="Desligado em Grupos. Ativar faz o grupo voltar a receber campanhas.">
+                <Button size="small" variant="outlined" onClick={() => activateGroup(g.name)}>Ativar e usar</Button></Tooltip>}
               {on && <TextField size="small" type="number" label="Limite" value={target!.limit || ''} placeholder="Auto" sx={{width: 110}}
                 onChange={e => patchGroup(g.name, {limit: int(e.target.value)})}/>}
             </Stack>
@@ -358,6 +381,18 @@ export default function CampaignEditor() {
     </Box>}
   </Box>;
 
+  /** "Distribuir no período": intervalo que cobre a janela do dia com o total da campanha, com variação de ±20%. */
+  const spread = (() => {
+    const count = Math.min(config.total_limit, products.length || plan?.matching || config.total_limit);
+    const runs = Math.ceil(count / Math.max(1, config.block_size));
+    const window = (config.end_hour - config.start_hour) * 60;
+    if (runs < 2 || window <= 0) return null;
+    const avg = Math.max(1, Math.floor(window / runs));
+    const patch = {interval_minutes: Math.max(1, Math.round(avg * .8)), interval_max_minutes: Math.max(1, Math.round(avg * 1.2))};
+    if (patch.interval_max_minutes <= patch.interval_minutes) patch.interval_max_minutes = 0;
+    if (config.interval_minutes === patch.interval_minutes && config.interval_max_minutes === patch.interval_max_minutes) return null;
+    return {count, patch};
+  })();
   const rhythmStep = <Stack gap={2.5}>
     {sendModeBox}
     <Box>
@@ -366,6 +401,10 @@ export default function CampaignEditor() {
         onChange={(_, v) => { const p = PRESETS.find(([k]) => k === v); if (p) set(p[1]); }} sx={{flexWrap: 'wrap', mb: 2, '& .MuiToggleButton-root': {textTransform: 'none', px: 1.5}}}>
         {PRESETS.map(([label]) => <ToggleButton key={label} value={label}>{label}</ToggleButton>)}
       </ToggleButtonGroup>
+      {spread && <Alert severity="info" sx={{mb: 2}} action={<Button color="inherit" size="small" onClick={() => set(spread.patch)}>Espalhar</Button>}>
+        Espalhar os {spread.count} anúncios das {config.start_hour}h às {config.end_hour}h: {config.block_size > 1 ? `${config.block_size} anúncios` : '1 anúncio'} a cada {spread.patch.interval_minutes}
+        {spread.patch.interval_max_minutes ? ` a ${spread.patch.interval_max_minutes} min, variando` : ' min'}.
+      </Alert>}
       <Stack direction={{xs: 'column', sm: 'row'}} gap={2}>
         <TextField label="Anúncios por execução" type="number" value={config.block_size} onChange={e => set({block_size: Math.min(20, int(e.target.value, 1))})}/>
         <TextField label="Intervalo entre mensagens" type="number" value={config.message_gap_seconds} disabled={config.block_size < 2}
@@ -445,6 +484,7 @@ export default function CampaignEditor() {
       {STEPS.map((label, i) => <Step key={label} completed={i < step}><StepButton onClick={() => goTo(i)}>{desktop || i === step ? label : ''}</StepButton></Step>)}
     </Stepper>
     {error && <Alert severity="error" sx={{mb: 2}} onClose={() => setError('')}>{error}</Alert>}
+    {notice && <Alert severity="success" sx={{mb: 2}} onClose={() => setNotice('')}>{notice}</Alert>}
     <Box sx={{display: 'grid', gap: 3, gridTemplateColumns: {xs: '1fr', md: 'minmax(0, 1fr) 320px'}, alignItems: 'start'}}>
       <Card sx={{p: {xs: 2, md: 3}}}>
         <Typography variant="h5" component="h2" mb={2.5}>{STEPS[step]}</Typography>
@@ -460,7 +500,8 @@ export default function CampaignEditor() {
           </Stack>
         </Stack>
       </Card>
-      <Summary plan={plan} loading={planning} config={config}/>
+      <Summary plan={plan} loading={planning} config={config} productCount={legacy && !products.length ? null : products.length}
+        onRespectLimit={limit => set({group_daily_limit: limit})}/>
     </Box>
   </>;
 }

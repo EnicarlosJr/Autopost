@@ -33,7 +33,27 @@ export default function ProductsPage() {
   const navigate = useNavigate();
   const sel = useSelection(); const confirm = useConfirm();
   const [facets, setFacets] = useState<CampaignOptions | null>(null), [showFilters, setShowFilters] = useState(false);
-  const [bulkDialog, setBulkDialog] = useState<'category' | 'tags' | null>(null), [bulkCategory, setBulkCategory] = useState('');
+  const [bulkDialog, setBulkDialog] = useState<'category' | 'tags' | 'campaign' | null>(null), [bulkCategory, setBulkCategory] = useState('');
+  const [bestN, setBestN] = useState(30), [openCampaigns, setOpenCampaigns] = useState<{id: number; name: string; display_status: string; products_count: number}[]>([]);
+  /** Marca os N prontos de maior desconto, com os filtros atuais (categoria, tag, busca e data). */
+  const selectBest = async () => {
+    try {
+      const ids = (await fetchAllIds('/products', {...listParams, status: 'processed', sort: 'discount'}, Math.ceil(bestN / 200) * 200)).slice(0, bestN);
+      sel.setAll(ids);
+      setNotice(`${ids.length} produto(s) pronto(s) de maior desconto selecionado(s).`);
+    } catch (e) { setError(apiError(e, 'Não foi possível selecionar os melhores.')); }
+  };
+  const chooseCampaign = async () => {
+    try { setOpenCampaigns((await api.get('/campaigns', {params: {status: 'draft,paused'}})).data); setBulkDialog('campaign'); }
+    catch (e) { setError(apiError(e, 'Não foi possível carregar as campanhas.')); }
+  };
+  const addToCampaign = async (id: number) => {
+    try {
+      const r = await inBatches(sel.ids, chunk => api.post(`/campaigns/${id}/products`, {product_ids: chunk}), 500);
+      setBulkDialog(null); sel.clear();
+      navigate(`/campaigns/${id}/edit?step=3`, {state: {notice: `${r.added ?? 0} produto(s) adicionado(s)${r.skipped ? `, ${r.skipped} já estavam na campanha` : ''}.`}});
+    } catch (e) { setError(apiError(e, 'Não foi possível adicionar à campanha.')); }
+  };
   const [bulkAdd, setBulkAdd] = useState<string[]>([]), [bulkRemove, setBulkRemove] = useState<string[]>([]);
   const activeFilters = [filters.category, filters.tag, filters.created_from, filters.sort !== 'newest' ? filters.sort : '', status, search].filter(Boolean).length;
   const setParam = (key: string, value: string) => { const next = new URLSearchParams(params); if (value) next.set(key, value); else next.delete(key); setParams(next); };
@@ -164,13 +184,18 @@ export default function ProductsPage() {
           <MenuItem value="">Todas</MenuItem>{facets?.tags.map(c => <MenuItem key={c.name} value={c.name}>{c.name} ({c.count})</MenuItem>)}</TextField></Grid>
         <Grid item xs={12} sm={6} md={3}><TextField select fullWidth size="small" label="Ordenar" value={filters.sort} onChange={e => setParam('sort', e.target.value === 'newest' ? '' : e.target.value)}>
           <MenuItem value="newest">Mais recentes</MenuItem><MenuItem value="oldest">Mais antigos</MenuItem><MenuItem value="price_asc">Menor preço</MenuItem>
-          <MenuItem value="price_desc">Maior preço</MenuItem><MenuItem value="title">Nome (A a Z)</MenuItem></TextField></Grid>
+          <MenuItem value="price_desc">Maior preço</MenuItem><MenuItem value="discount">Maior desconto</MenuItem><MenuItem value="title">Nome (A a Z)</MenuItem></TextField></Grid>
         <Grid item xs={12} sm={6} md={3}><TextField fullWidth size="small" type="date" label="Cadastrados desde" InputLabelProps={{shrink: true}}
           value={filters.created_from} onChange={e => setParam('from', e.target.value)}/></Grid>
       </Grid></Card>
     </Collapse>
     {list.items.length > 0 && <SelectAll total={list.items.length} selected={list.items.filter(p => sel.has(p.id)).length}
       onAll={() => sel.add(list.items.map(p => p.id))} onNone={sel.clear} label={`Selecionar os ${list.items.length} desta página`}/>}
+    <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap" my={1}>
+      <TextField size="small" type="number" label="Quantos" value={bestN} sx={{width: 96}} onChange={e => setBestN(Math.max(1, Math.min(1000, Number(e.target.value) || 1)))}/>
+      <Tooltip title="Entre os produtos prontos, com os filtros atuais, marca os de maior desconto. Depois use “Adicionar a uma campanha”.">
+        <Button variant="outlined" onClick={selectBest}>Selecionar os {bestN} de maior desconto</Button></Tooltip>
+    </Stack>
     <SelectMatching pageCount={list.items.length} pageSelected={pageSelected} selected={sel.count} total={list.total} noun="produtos"
       onSelectAll={async () => sel.setAll(await fetchAllIds('/products', listParams))} onClear={sel.clear}/>
 
@@ -221,11 +246,21 @@ export default function ProductsPage() {
     </Menu>
 
     <BulkBar count={sel.count} noun="produto(s) selecionado(s)" onClear={sel.clear}>
-      <Button size="small" variant="outlined" startIcon={<AddIcon/>} onClick={() => navigate(`/campaigns/new?products=${sel.ids.join(',')}`)}>Adicionar a uma campanha</Button>
+      <Button size="small" variant="outlined" startIcon={<AddIcon/>} onClick={chooseCampaign}>Adicionar a uma campanha</Button>
       <Button size="small" variant="outlined" onClick={() => { setBulkCategory(''); setBulkDialog('category'); }}>Alterar categoria</Button>
       <Button size="small" variant="outlined" startIcon={<TagIcon/>} onClick={() => { setBulkAdd([]); setBulkRemove([]); setBulkDialog('tags'); }}>Tags</Button>
       <Button size="small" variant="outlined" startIcon={<DeleteIcon/>} onClick={bulkDelete}>Excluir</Button>
     </BulkBar>
+    <Dialog open={bulkDialog === 'campaign'} onClose={() => setBulkDialog(null)} maxWidth="sm" fullWidth>
+      <DialogTitle>Adicionar {sel.count} produto(s) a uma campanha</DialogTitle>
+      <DialogContent><Stack gap={1} mt={1}>
+        <Button variant="contained" onClick={() => navigate(`/campaigns/new?products=${sel.ids.join(',')}`)}>Criar uma campanha nova com eles</Button>
+        {openCampaigns.length > 0 && <Typography variant="body2" color="text.secondary" mt={1}>Ou junte a uma campanha em rascunho ou pausada:</Typography>}
+        {openCampaigns.map(c => <Button key={c.id} variant="outlined" sx={{justifyContent: 'space-between', textTransform: 'none'}} onClick={() => addToCampaign(c.id)}>
+          <span>{c.name}</span><Typography component="span" variant="caption">{c.display_status === 'paused' ? 'Pausada' : 'Rascunho'}, {c.products_count} produto(s)</Typography></Button>)}
+      </Stack></DialogContent>
+      <DialogActions><Button onClick={() => setBulkDialog(null)}>Cancelar</Button></DialogActions>
+    </Dialog>
     <Dialog open={bulkDialog === 'category'} onClose={() => setBulkDialog(null)} maxWidth="xs" fullWidth>
       <DialogTitle>Alterar categoria de {sel.count} produto(s)</DialogTitle>
       <DialogContent><Autocomplete freeSolo sx={{mt: 1}} options={(facets?.categories ?? []).map(c => c.name)} value={bulkCategory}

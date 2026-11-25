@@ -59,7 +59,8 @@ function NicheDialog({draft, onClose, onSaved}: {draft: Draft | null; onClose: (
             <Stack gap={2}>
               <MultiPick label="Tags pessoais" value={value.tags} onChange={v => set({tags: v})} options={[]} helper="Ex.: oportunidade, presente, lançamento"/>
               <MultiPick label="Palavras-chave incluídas" value={value.include_keywords} onChange={v => set({include_keywords: v})} options={[]}
-                helper="Usadas nas buscas de produtos (ex.: notebook, SSD, memória RAM)"/>
+                helper={`${value.include_keywords.length}/10 palavras. Usadas nas buscas de produtos (ex.: notebook, SSD, memória RAM).${value.include_keywords.length > 10
+                  ? ' Acima de 10, o nicho vira mais de uma busca e leva mais tempo.' : ''}`}/>
               <MultiPick label="Palavras-chave excluídas" value={value.exclude_keywords} onChange={v => set({exclude_keywords: v})} options={[]}
                 helper="Anúncios com essas palavras no título ficam de fora (ex.: usado, recondicionado)"/>
             </Stack>

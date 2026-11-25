@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.database.session import get_db
@@ -47,7 +47,7 @@ def _commit_new(db: Session) -> None:
 def list_products(response: Response, status: str | None = None, category: str | None = None,
                   marketplace: str | None = None, q: str | None = Query(default=None, max_length=100),
                   tag: str | None = Query(default=None, max_length=60),
-                  sort: str = Query(default="newest", pattern="^(newest|oldest|price_asc|price_desc|title)$"),
+                  sort: str = Query(default="newest", pattern="^(newest|oldest|price_asc|price_desc|title|discount)$"),
                   created_from: datetime | None = None, created_to: datetime | None = None,
                   limit: int = 50, offset: int = 0, db: Session = Depends(get_db)):
     stmt = select(Product)
@@ -62,7 +62,10 @@ def list_products(response: Response, status: str | None = None, category: str |
     response.headers["X-Total-Count"] = str(db.scalar(select(func.count()).select_from(stmt.subquery())))
     order = {"newest": (Product.created_at.desc(), Product.id.desc()), "oldest": (Product.created_at.asc(), Product.id.asc()),
              "price_asc": (Product.price.asc(), Product.id.desc()), "price_desc": (Product.price.desc(), Product.id.desc()),
-             "title": (Product.title.asc(), Product.id.desc())}[sort]
+             "title": (Product.title.asc(), Product.id.desc()),
+             # Maior desconto primeiro (preço de antes acima do atual); sem desconto vai para o fim.
+             "discount": (case((and_(Product.original_price > Product.price, Product.price.is_not(None)),
+                                (Product.original_price - Product.price) / Product.original_price), else_=0).desc(), Product.id.desc())}[sort]
     stmt = stmt.order_by(*order)
     return list(db.scalars(stmt.offset(max(0, offset)).limit(max(1, min(limit, 200)))))
 

@@ -210,3 +210,21 @@ def test_one_search_per_niche_with_its_own_audience(env):
     assert [len(s["keywords"]) for s in by_niche["Tênis"]] == [10, 2]
     assert all(s["filters"]["gender"] == "male" and s["filters"]["min_discount"] == 15 and s["exclude_keywords"] == ["infantil"]
                and s["categories"][0]["id"] == "MLB1648" and s["status"] == "queued" for s in by_niche["Tênis"])
+
+def test_best_from_all_searches_adds_once_per_product(env):
+    client, _ = env
+    _, camp = _setup(client)
+    cid = camp["id"]
+    first = client.post(f"/api/campaigns/{cid}/searches", json={"keywords": ["ssd"], "categories": [{"id": "MLB1648", "include_children": True}]}).json()
+    client.get("/api/campaign-searches/due")
+    client.post(f"/api/campaign-searches/{first['id']}/results", json={"items": [
+        _item(21, "MLB1672", title="SSD Kingston NV2 480GB M.2", seller="Loja A"), _item(22, "MLB1672", title="SSD WD Green 240GB", seller="Loja B")]})
+    second = client.post(f"/api/campaigns/{cid}/searches", json={"keywords": ["ssd nvme"], "categories": [{"id": "MLB1648", "include_children": True}]}).json()
+    client.get("/api/campaign-searches/due")
+    # O mesmo anúncio aparece de novo na 2ª busca: não entra duas vezes.
+    client.post(f"/api/campaign-searches/{second['id']}/results", json={"items": [
+        _item(21, "MLB1672", title="SSD Kingston NV2 480GB M.2", seller="Loja A"), _item(23, "MLB1672", title="SSD Crucial P3 1TB", seller="Loja C")]})
+    r = client.post(f"/api/campaigns/{cid}/searches/best-all", json={"per_search": 5}).json()
+    assert r["added"] == 3 and [s["added"] for s in r["searches"]] == [2, 1]
+    assert len(client.get(f"/api/campaigns/{cid}/products").json()) == 3
+    assert client.post(f"/api/campaigns/{cid}/searches/best-all", json={"per_search": 5}).json()["added"] == 0

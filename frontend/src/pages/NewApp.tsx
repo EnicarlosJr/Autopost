@@ -18,6 +18,7 @@ import QueuePage from './QueuePage';
 import SearchesPage from './SearchesPage';
 import SettingsPage from './SettingsPage';
 import {SchoolListEditor, SchoolListsPage} from './SchoolListsPage';
+import SchoolVisitorsPage from './SchoolVisitorsPage';
 
 const DRAWER = 248;
 
@@ -154,6 +155,7 @@ function Shell({email, onLogout}: {email: string; onLogout: () => void}) {
           <Route path="/campaigns/new" element={<CampaignEditor key="new"/>}/>
           <Route path="/campaigns/:id/edit" element={<CampaignEditor/>}/>
           <Route path="/school-lists" element={<SchoolListsPage/>}/>
+          <Route path="/school-lists/visitors" element={<SchoolVisitorsPage/>}/>
           <Route path="/school-lists/:id" element={<SchoolListEditor/>}/>
           <Route path="/groups" element={<GroupsPage/>}/>
           <Route path="/profile" element={<ProfilePage/>}/>

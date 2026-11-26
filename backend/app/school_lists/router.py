@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.deps import require_user
 from app.database.session import get_db
 from app.models.product import Product
-from app.models.school import SchoolList, SchoolListItem, SchoolListOption
+from app.models.school import SchoolList, SchoolListItem, SchoolListOption, SchoolVisitor
 from app.models.user import User
 from app.products.service import add_note
 from app.products.sources import BROWSER_NOTICE, marketplace_of, needs_browser
@@ -26,6 +26,9 @@ class ListWrite(BaseModel):
     year: int = Field(default=2027, ge=2020, le=2100)
     notes: str = Field(default="", max_length=5000)
     refresh_hours: int = Field(default=12, ge=1, le=168)
+    public: bool = False
+    turmas: list[str] = Field(default_factory=list, max_length=30)
+    contact: str = Field(default="", max_length=200)
 
 class ItemWrite(BaseModel):
     section: str = Field(default="coletivo", pattern="^(coletivo|individual)$")
@@ -93,7 +96,8 @@ def list_lists(db: Session = Depends(get_db), user: User = Depends(require_user)
 @router.post("", status_code=201)
 def create_list(data: ListWrite, db: Session = Depends(get_db), user: User = Depends(require_user)):
     row = SchoolList(owner_id=user.id, school=data.school.strip(), grade=data.grade.strip(), year=data.year,
-                     notes=data.notes, refresh_hours=data.refresh_hours)
+                     notes=data.notes, refresh_hours=data.refresh_hours, public=data.public,
+                     turmas=service.clean_turmas(data.turmas), contact=data.contact.strip())
     db.add(row); db.commit(); db.refresh(row)
     return service.list_detail(db, row)
 
@@ -119,6 +123,7 @@ def update_list(list_id: int, data: ListWrite, db: Session = Depends(get_db), us
     row = _list(db, user, list_id)
     row.school, row.grade, row.year = data.school.strip(), data.grade.strip(), data.year
     row.notes, row.refresh_hours = data.notes, data.refresh_hours
+    row.public, row.turmas, row.contact = data.public, service.clean_turmas(data.turmas), data.contact.strip()
     db.commit()
     return service.list_detail(db, row)
 
@@ -239,3 +244,51 @@ def export_page(list_id: int, db: Session = Depends(get_db), user: User = Depend
     name = re.sub(r"[^a-z0-9]+", "-", unicodedata.normalize("NFKD", f"orcamento {row.grade} {row.year}").encode("ascii", "ignore").decode().lower()).strip("-")
     return Response(body, media_type="text/html; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="{name}.html"'})
+
+
+# ------------------------------------------------------------------ responsáveis (quem se identificou na página pública)
+
+visitors_router = APIRouter(prefix="/api/school-visitors", tags=["school-lists"])
+
+class VisitorIds(BaseModel):
+    ids: list[int] = Field(min_length=1, max_length=200)
+
+def _visitors_query(user: User, list_id: int | None, q: str | None):
+    stmt = select(SchoolVisitor).where(SchoolVisitor.owner_id == user.id)
+    if list_id: stmt = stmt.where(SchoolVisitor.list_id == list_id)
+    if q: stmt = stmt.where(SchoolVisitor.student_name.ilike(f"%{q.strip()}%"))
+    return stmt
+
+def _visitor_read(v: SchoolVisitor) -> dict:
+    return {"id": v.id, "list_id": v.list_id, "school": v.school, "student_name": v.student_name, "turma": v.turma,
+            "visits": v.visits, "created_at": service.aware(v.created_at).isoformat() if v.created_at else None,
+            "last_seen_at": service.aware(v.last_seen_at).isoformat() if v.last_seen_at else None}
+
+@visitors_router.get("")
+def list_visitors(response: Response, list_id: int | None = None, q: str | None = None, limit: int = 50, offset: int = 0,
+                  db: Session = Depends(get_db), user: User = Depends(require_user)):
+    stmt = _visitors_query(user, list_id, q)
+    response.headers["X-Total-Count"] = str(db.scalar(select(func.count()).select_from(stmt.subquery())))
+    rows = db.scalars(stmt.order_by(SchoolVisitor.last_seen_at.desc(), SchoolVisitor.id.desc()).offset(max(0, offset)).limit(max(1, min(limit, 200))))
+    return [_visitor_read(v) for v in rows]
+
+@visitors_router.get("/export.csv")
+def export_visitors(list_id: int | None = None, q: str | None = None, db: Session = Depends(get_db), user: User = Depends(require_user)):
+    import csv, io
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, delimiter=";")
+    writer.writerow(["Aluno", "Turma", "Escola", "Acessos", "Primeiro acesso", "Último acesso"])
+    for v in db.scalars(_visitors_query(user, list_id, q).order_by(SchoolVisitor.turma, SchoolVisitor.student_name)):
+        r = _visitor_read(v)
+        writer.writerow([r["student_name"], r["turma"], r["school"], r["visits"], r["created_at"], r["last_seen_at"]])
+    return Response("\ufeff" + buffer.getvalue(), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="responsaveis.csv"'})
+
+@visitors_router.post("/bulk/delete")
+def delete_visitors(data: VisitorIds, db: Session = Depends(get_db), user: User = Depends(require_user)):
+    """Exclui os registros (pedido do responsável ou limpeza). O cookie no navegador deixa de valer."""
+    rows = list(db.scalars(select(SchoolVisitor).where(SchoolVisitor.owner_id == user.id, SchoolVisitor.id.in_(data.ids))))
+    for v in rows:
+        db.delete(v)
+    db.commit()
+    return {"deleted": len(rows)}

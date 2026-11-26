@@ -76,7 +76,8 @@ export function SchoolListsPage() {
   useEffect(() => { load(); }, [load]);
   return <>
     <PageHeader title="Listas escolares" description="A lista de material de cada série, com os produtos que você escolheu para cada item. O Autopost reconfere os preços e gera a página de orçamento para os pais."
-      actions={<Button variant="contained" onClick={() => setOpen(true)}>Nova lista</Button>}/>
+      actions={<><Button variant="outlined" component={Link} to="/school-lists/visitors">Responsáveis</Button>
+        <Button variant="contained" onClick={() => setOpen(true)}>Nova lista</Button></>}/>
     <Feedback error={error} onRetry={load} onClose={() => setError('')}/>
     <Loading show={loading}/>
     {!loading && !lists.length && <Empty text="Nenhuma lista ainda. Crie a primeira com a série e cole os itens da lista da escola."/>}
@@ -93,7 +94,7 @@ export function SchoolListsPage() {
           </Stack>
         </Stack>
         <Box mt={1}><Meta items={[ago(l.oldest_capture).replace('conferido', 'preço mais antigo conferido'),
-          l.empty_items > 0 && `${l.empty_items} item(ns) sem produto`, l.missing_links > 0 && `${l.missing_links} opção(ões) sem link de afiliado`]}/></Box>
+          l.public ? 'publicada' : 'não publicada', l.visitors > 0 && `${l.visitors} responsável(is)`, l.empty_items > 0 && `${l.empty_items} item(ns) sem produto`, l.missing_links > 0 && `${l.missing_links} opção(ões) sem link de afiliado`]}/></Box>
       </Card>)}
     </Stack>
     <NewListDialog open={open} onClose={() => setOpen(false)} onCreated={id => navigate(`/school-lists/${id}`)}/>
@@ -211,6 +212,46 @@ function ItemCard({list, item, onChange, onError, onNotice}: {list: SchoolList; 
   </Card>;
 }
 
+
+function PublishCard({list, onChange, onError, onNotice}: {list: SchoolList; onChange: (l: SchoolList) => void; onError: (m: string) => void; onNotice: (m: string) => void}) {
+  const [turmas, setTurmas] = useState(list.turmas.join(', ')), [contact, setContact] = useState(list.contact), [busy, setBusy] = useState(false);
+  useEffect(() => { setTurmas(list.turmas.join(', ')); setContact(list.contact); }, [list.id, list.turmas.join('|'), list.contact]);
+  const save = async (publicValue: boolean) => {
+    setBusy(true);
+    try {
+      const r = await api.put<SchoolList>(`/school-lists/${list.id}`, {school: list.school, grade: list.grade, year: list.year, notes: list.notes,
+        refresh_hours: list.refresh_hours, public: publicValue, contact: contact.trim(), turmas: turmas.split(/[,;\n]/).map(t => t.trim()).filter(Boolean)});
+      onChange(r.data); onNotice(publicValue ? 'Página publicada.' : 'Publicação salva.');
+    } catch (e) { onError(apiError(e, 'Não foi possível salvar a publicação.')); }
+    finally { setBusy(false); }
+  };
+  const copy = async () => { try { await navigator.clipboard.writeText(list.public_url); onNotice('Link copiado.'); } catch { onError('Não consegui copiar; selecione o link e copie.'); } };
+  return <Card sx={{p: 2, mb: 2}}>
+    <Stack direction="row" alignItems="center" justifyContent="space-between" gap={1} flexWrap="wrap">
+      <Box><Typography fontWeight={700}>Página online para os pais</Typography>
+        <Typography fontSize={13} color="text.secondary">Os pais informam o nome do aluno e a turma e vão direto para esta lista. {list.visitors} responsável(is) já se identificaram.</Typography></Box>
+      <Stack direction="row" alignItems="center" gap={.5}>
+        <Switch checked={list.public} disabled={busy} onChange={e => save(e.target.checked)} inputProps={{'aria-label': 'Publicar página'}}/>
+        <Typography fontSize={14} fontWeight={600}>{list.public ? 'Publicada' : 'Não publicada'}</Typography>
+      </Stack>
+    </Stack>
+    <Stack direction={{xs: 'column', md: 'row'}} gap={1.5} mt={1.5}>
+      <TextField size="small" label="Turmas desta série" value={turmas} onChange={e => setTurmas(e.target.value)} sx={{flex: 1}}
+        helperText="Separe por vírgula. Ex.: A, B, C. Vazio = só o nome da série."/>
+      <TextField size="small" label="Contato para os pais (dados e dúvidas)" value={contact} onChange={e => setContact(e.target.value)} sx={{flex: 1}}
+        helperText="Aparece no aviso de autorização. Ex.: e-mail ou WhatsApp."/>
+      <Box><Button variant="outlined" disabled={busy} onClick={() => save(list.public)}>Salvar</Button></Box>
+    </Stack>
+    {list.public && <Stack direction={{xs: 'column', sm: 'row'}} gap={1} alignItems={{sm: 'center'}} mt={1.5}>
+      <Typography fontSize={14} sx={{wordBreak: 'break-all'}}>Link para o grupo: <b>{list.public_url}</b></Typography>
+      <Button size="small" onClick={copy}>Copiar link</Button>
+      <Button size="small" component="a" href={list.public_url} target="_blank" rel="noopener">Abrir página</Button>
+    </Stack>}
+    {list.public && /localhost|127\.0\.0\.1/.test(list.public_url) && <Alert severity="info" sx={{mt: 1.5}}>
+      O link ainda aponta para este computador. Quando o sistema estiver online, defina APP_PUBLIC_URL no .env com o seu domínio.</Alert>}
+  </Card>;
+}
+
 export function SchoolListEditor() {
   const {id} = useParams();
   const navigate = useNavigate();
@@ -282,6 +323,7 @@ export function SchoolListEditor() {
         {list.missing_links > 0 && `${list.missing_links} opção(ões) sem link de afiliado: na página dos pais elas usam o link comum, sem comissão.`}
       </Alert>}
     </Card>
+    <PublishCard list={list} onChange={apply} onError={setError} onNotice={setNotice}/>
     <Tabs value={section} onChange={(_, v) => setSection(v)} sx={{mb: 2}}>
       {(['coletivo', 'individual'] as SchoolSection[]).map(s => <Tab key={s} value={s}
         label={`${SECTION_LABEL[s]} (${list.items.filter(i => i.section === s).length})`}/>)}

@@ -48,12 +48,15 @@ backend/app/
                           da campanha: extensão busca no site, classifica com domain_discovery, servidor filtra)
   automations/router.py   configurações, forma de envio avulsa, prévia do modelo, logs
   school_lists/           listas escolares: router.py (lista, itens, 3 opções por item, fila de conferência
-                          /refresh/next, página page.html) e service.py (puro: catálogo, totais, render_page)
+                          /refresh/next, página page.html, /api/school-visitors), public.py (páginas sem login
+                          /escolas/<escola>[/<série>]: identificação por nome do aluno + turma, cookie com token)
+                          e service.py (puro: catálogo, totais, render_page, render_landing, slugs)
   workers/                celery_app.py, tasks.py
 backend/migrations/versions/   0001 → 0019 (0011 catálogo, 0012–0013 busca e regras da campanha,
                                0014 público do nicho, 0015 confiabilidade, 0016–0017 forma de envio,
                                0018 produto de catálogo do anúncio, 0019 padrão do perfil: #publi, selo de desconto,
-                               campanha personalizada, 0020 listas escolares)
+                               campanha personalizada, 0020 listas escolares,
+                               0021 página pública e responsáveis)
 backend/tests/                 pytest (README diz 74 testes); fixture HTML do ML
 extension/
   background.js   service worker: recebe pedidos do painel, roda a fila automática e as buscas
@@ -134,7 +137,7 @@ Princípio: o sistema continua fazendo o trabalho pesado, mas **deixa de agir so
 | sem. 2 | **3. Telegram + liberação no WhatsApp** | destino "Telegram" (token do bot + ID do canal) nas campanhas; `whatsapp.js` em modo "liberação": cola mensagem/foto e **para no botão enviar**; painel "Prontas para enviar" para liberar em lote. Migração: Telegram recebe tudo, WhatsApp recebe uma seleção | 4–6 dias |
 | sem. 3 | **2. Links do ML em lote** | status "Aguardando link" e tela "Gerar links do dia" com contador ("12 de 20"); `capture.js` deixa de clicar no gerador (só lê o link após o clique do usuário); `publisher.js` deixa de chamar `ensureAffiliateLink` no envio. Busca: avaliar API oficial do ML ou ler só durante a tela de links. `meli.la` sem encurtador nem parâmetro extra | 3–4 dias |
 | sem. 4+ | **4. Conectores de loja** | tabela `stores` e campo `store` em produtos, ofertas e campanhas; interface por loja `search()`, `make_link()`, `rules()`; Shopee (Open API GraphQL, `sub_id` por campanha), Amazon (API de associados após as primeiras vendas), Magalu (lote, como o ML); credenciais só no `.env` do servidor, nunca na extensão | 1 sem. + 2–3 dias/loja |
-| sem. 4+ | **5. Monitoramento** | painel por canal e loja (envios, cliques por `sub_id`/UTM, entradas); alertas de restrição, sessão caída e saídas em massa; lembrete semanal de comissões anuladas; registro de cada envio (data, canal, link, preço); **não guardar telefones de membros** (LGPD); número reserva como admin | 2–3 dias |
+| sem. 4+ | **5. Monitoramento** | painel por canal e loja (envios, cliques por `sub_id`/UTM, entradas); alertas de restrição, sessão caída e saídas em massa; lembrete semanal de comissões anuladas; registro de cada envio (data, canal, link, preço); **não guardar telefones de membros** (LGPD; a página das listas escolares guarda só nome do aluno + turma, com autorização); número reserva como admin | 2–3 dias |
 
 O que já existe e ajuda no roteiro:
 - **Foto + texto** e **marca d'água** já estão prontos (0016/0017, `social_image.py`), então o modo "liberação" pode colar a foto também.
@@ -151,7 +154,7 @@ Cuidados: o roteiro se baseia em resumos de terceiros dos Termos do ML, então o
 ## Convenções
 
 - Textos de interface, erros e comentários em PT-BR, frases curtas e diretas.
-- Toda mudança de schema vem com migração Alembic numerada (próxima: `0021_…`), idempotente (checa colunas com `inspect`, como as atuais).
+- Toda mudança de schema vem com migração Alembic numerada (próxima: `0022_…`), idempotente (checa colunas com `inspect`, como as atuais).
 - Listas da API aceitam `limit`/`offset` e devolvem `X-Total-Count`.
 - Seletores do WhatsApp só em `whatsapp.js > sendInWhatsApp`; leitura de página só em `reader.js`/`search_reader.js`.
 - Ao mudar regra de negócio: atualizar o teste correspondente e o README.

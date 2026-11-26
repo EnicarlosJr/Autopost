@@ -124,6 +124,14 @@ Menu **Publicar > Listas escolares**. Cada lista é a lista de material de uma s
 5. **Link de afiliado**: opções sem meli.la aparecem como "Sem link de afiliado" e, na página dos pais, usam o link comum (sem comissão). O botão **Gerar link de afiliado** gera o meli.la daquele produto quando você clica.
 6. **Baixar página de orçamento**: um arquivo `.html` único (sem dependências) para publicar no seu site ou landing. Os pais escolhem a opção de cada item, ajustam a quantidade, desmarcam o que já têm, veem o total e abrem cada item no Mercado Livre (o ML não deixa encher o carrinho de uma vez; a página tem a marcação "Já pus no carrinho"). A página mostra o horário da conferência mais antiga e o aviso #publi do seu perfil. Gere de novo depois de atualizar os preços.
 
+7. **Página online para os pais** (cartão "Página online para os pais" na lista): ligue **Publicada**, informe as **turmas** da série (ex.: A, B, C) e um **contato** para os pais. O link para mandar no grupo é `APP_PUBLIC_URL/escolas/<escola>` (ex.: `/escolas/colegio-cpcm`), um por escola.
+   - O responsável informa **só o nome do aluno e a turma**, marca a autorização e vai direto para a lista da série, com os preços da última conferência (a página é montada na hora, não precisa baixar nem subir arquivo).
+   - O navegador guarda um cookie (só um token, por 1 ano): quem já se identificou entra direto. "trocar aluno" volta ao formulário (irmãos em outra série).
+   - Cada identificação fica em **Listas escolares › Responsáveis**: aluno, turma, escola, número de acessos (um por meia hora), primeiro e último acesso. Dá para filtrar, exportar CSV e excluir (pedido de exclusão do responsável). Nada de telefone ou e-mail é coletado.
+   - Até 20 identificações por IP a cada 15 min (contra robôs).
+   - **Online de verdade:** as páginas são servidas pela API (porta 8000), em `/escolas/...`, sem login. Para os pais abrirem de fora, a API precisa estar acessível na internet (servidor/VPS ou um túnel, como o Cloudflare Tunnel) e o `.env` precisa de `APP_PUBLIC_URL` com o endereço público (vale também para as fotos). Exponha só o caminho `/escolas/` se puder; o painel e a `/api` continuam protegidos por login, mas não precisam ficar abertos.
+   - Dados de criança: o nome do aluno é dado pessoal de menor (LGPD, art. 14). O formulário pede a autorização do responsável e mostra o contato para exclusão; confira o texto com a escola antes de divulgar.
+
 Produto de lista escolar não vira publicação automática; para ofertá-lo no grupo, use Campanhas ou a Fila como qualquer produto.
 
 ## Forma de envio: prévia do link ou foto + texto

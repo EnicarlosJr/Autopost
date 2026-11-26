@@ -4,12 +4,14 @@ As funções de cima são puras (sem banco) para serem testadas sozinhas.
 """
 import html
 import json
+import os
 import re
+import unicodedata
 from datetime import datetime, timedelta, timezone
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 from app.models.product import Product
-from app.models.school import SchoolList, SchoolListItem, SchoolListOption
+from app.models.school import SchoolList, SchoolListItem, SchoolListOption, SchoolVisitor
 
 SECTIONS = ("coletivo", "individual")
 DEFAULT_LABELS = ("Econômica", "Equilibrada", "Premium")
@@ -17,6 +19,40 @@ CLAIM_MINUTES = 10
 _CATALOG = re.compile(r"/p/(MLB\d+)", re.I)
 _LISTING = re.compile(r"MLB-?U?(\d{6,})", re.I)
 _AFFILIATE = re.compile(r"^https://(meli\.la|(www\.)?mercadolivre\.com(\.br)?/sec)/", re.I)
+
+
+def slugify(text: str) -> str:
+    plain = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z0-9]+", "-", plain).strip("-")
+
+
+def school_slug(school_list) -> str:
+    return slugify(school_list.school) or "escola"
+
+
+def grade_slug(school_list) -> str:
+    return slugify(f"{school_list.grade} {school_list.year}") or str(school_list.id)
+
+
+def turmas_of(school_list) -> list[str]:
+    try:
+        value = json.loads(school_list.turmas or "[]")
+    except ValueError:
+        value = []
+    return [str(t).strip()[:60] for t in value if str(t).strip()]
+
+
+def clean_turmas(values: list[str]) -> str:
+    seen, out = set(), []
+    for value in values:
+        name = " ".join(str(value).split())[:60]
+        if name and name.lower() not in seen:
+            seen.add(name.lower()); out.append(name)
+    return json.dumps(out[:30], ensure_ascii=False)
+
+
+def public_base() -> str:
+    return os.getenv("APP_PUBLIC_URL", "http://localhost:8000").rstrip("/")
 
 
 def now() -> datetime:
@@ -114,9 +150,13 @@ def list_detail(db: Session, school_list: SchoolList) -> dict:
     captured = [o["captured_at"] for i in out_items for o in i["options"] if o["captured_at"]]
     return {"id": school_list.id, "school": school_list.school, "grade": school_list.grade, "year": school_list.year,
             "notes": school_list.notes, "refresh_hours": school_list.refresh_hours, "items": out_items,
+            "public": bool(school_list.public), "turmas": turmas_of(school_list), "contact": school_list.contact or "",
+            "public_url": f"{public_base()}/escolas/{school_slug(school_list)}",
+            "page_url": f"{public_base()}/escolas/{school_slug(school_list)}/{grade_slug(school_list)}",
             "totals": totals(out_items), "oldest_capture": min(captured) if captured else None,
             "missing_links": sum(1 for i in out_items for o in i["options"] if not o["has_affiliate_link"]),
-            "empty_items": sum(1 for i in out_items if not i["options"])}
+            "empty_items": sum(1 for i in out_items if not i["options"]),
+            "visitors": db.scalar(select(func.count()).select_from(SchoolVisitor).where(SchoolVisitor.list_id == school_list.id)) or 0}
 
 
 def next_refresh(db: Session, owner_id: int) -> Product | None:
@@ -167,7 +207,8 @@ def buy_link_from(option: dict) -> str:
     return option["affiliate_url"] if option["has_affiliate_link"] else option["original_url"]
 
 
-def render_page(detail: dict, disclosure: str = "#publi", checked_at: datetime | None = None) -> str:
+def render_page(detail: dict, disclosure: str = "#publi", checked_at: datetime | None = None,
+                greeting: str = "", switch_url: str = "") -> str:
     """Página única (HTML + CSS + JS, sem dependências) para publicar no seu site ou landing."""
     data = page_data(detail)
     stamp = (checked_at or now()).astimezone(timezone(timedelta(hours=-3))).strftime("%d/%m/%Y às %H:%M")
@@ -177,7 +218,59 @@ def render_page(detail: dict, disclosure: str = "#publi", checked_at: datetime |
     school = html.escape(data["school"])
     return (PAGE_TEMPLATE.replace("{{TITLE}}", title).replace("{{SCHOOL}}", school)
             .replace("{{DISCLOSURE}}", html.escape(disclosure or "#publi")).replace("{{STAMP}}", html.escape(stamp))
-            .replace("{{DATA}}", payload))
+            .replace("{{GREETING}}", _greeting(greeting, switch_url)).replace("{{DATA}}", payload))
+
+
+def _greeting(greeting: str, switch_url: str) -> str:
+    if not greeting:
+        return ""
+    link = f' · <a href="{html.escape(switch_url)}">trocar aluno</a>' if switch_url else ""
+    return f'<p class="muted" style="margin:0 0 6px">{html.escape(greeting)}{link}</p>'
+
+
+def render_landing(school: str, options: list[tuple[str, str]], action: str, contact: str = "", error: str = "",
+                   student: str = "", disclosure: str = "#publi") -> str:
+    """Entrada da escola: o responsável informa o nome do aluno e a turma e vai direto para a lista da série."""
+    opts = "".join(f'<option value="{html.escape(v)}">{html.escape(label)}</option>' for v, label in options)
+    contact_line = (f" Para pedir a exclusão dos dados, fale com {html.escape(contact)}." if contact
+                    else " Você pode pedir a exclusão dos dados a qualquer momento a quem enviou este link.")
+    return (LANDING_TEMPLATE.replace("{{SCHOOL}}", html.escape(school or "Material escolar"))
+            .replace("{{ACTION}}", html.escape(action)).replace("{{OPTIONS}}", opts)
+            .replace("{{ERROR}}", f'<p class="err" role="alert">{html.escape(error)}</p>' if error else "")
+            .replace("{{STUDENT}}", html.escape(student)).replace("{{CONTACT}}", contact_line)
+            .replace("{{DISCLOSURE}}", html.escape(disclosure or "#publi")))
+
+
+LANDING_TEMPLATE = """<!doctype html>
+<html lang="pt-BR">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Material escolar · {{SCHOOL}}</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#F6F6F3;color:#1B1D1C;font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:460px;margin:0 auto;padding:40px 20px}h1{font-size:26px;margin:0 0 6px}p{line-height:1.5}
+.card{background:#fff;border:1px solid #E4E4DE;border-radius:16px;padding:22px;display:flex;flex-direction:column;gap:14px}
+label{display:flex;flex-direction:column;gap:6px;font-size:14px;font-weight:600}
+input[type=text],select{font:inherit;font-size:16px;padding:12px;border:1px solid #CFCFC7;border-radius:10px;background:#fff;color:#1B1D1C}
+.consent{flex-direction:row;align-items:flex-start;gap:10px;font-weight:400;font-size:13px;color:#4A4D4B}
+.consent input{width:20px;height:20px;margin:2px 0 0;accent-color:#0F6E5C;flex:none}
+button{font:inherit;font-size:16px;font-weight:600;padding:14px;border-radius:12px;border:0;background:#0F6E5C;color:#fff;cursor:pointer}
+.err{color:#B3261E;margin:0;font-size:14px}.muted{font-size:12px;color:#5A5D5B;margin:0}
+</style></head>
+<body><main>
+<p class="muted">{{DISCLOSURE}} · os links são de afiliado; comprar por eles é opcional</p>
+<h1>{{SCHOOL}}</h1>
+<p>Informe o nome do aluno e a turma para ver a lista de material da série, com os preços de hoje.</p>
+<form class="card" method="post" action="{{ACTION}}">
+{{ERROR}}
+<label>Nome do aluno<input type="text" name="student_name" required maxlength="120" autocomplete="off" value="{{STUDENT}}"></label>
+<label>Turma<select name="turma" required><option value="">Escolha a turma</option>{{OPTIONS}}</select></label>
+<label class="consent"><input type="checkbox" name="consent" value="1" required>
+<span>Sou responsável por este aluno e autorizo guardar o nome e a turma informados para montar a lista e controlar os acessos desta página. Nada mais é coletado.{{CONTACT}}</span></label>
+<button type="submit">Ver a lista</button>
+</form>
+</main></body></html>
+"""
 
 
 PAGE_TEMPLATE = """<!doctype html>
@@ -221,7 +314,7 @@ aside{flex:1 1 280px;background:#fff;border:1px solid #E4E4DE;border-radius:16px
 <body>
 <header><div class="wrap top"><span class="pill">{{SCHOOL}}</span><span class="grow"></span><span>{{DISCLOSURE}} · os links são de afiliado; comprar por eles é opcional</span></div></header>
 <main class="wrap">
-<h1>{{TITLE}}</h1>
+{{GREETING}}<h1>{{TITLE}}</h1>
 <p class="lead">A lista da série já vem pronta. Desmarque o que você já tem, escolha a opção de cada item e compre no Mercado Livre item por item.</p>
 <div class="tabs" role="tablist" id="tabs"></div>
 <div class="cols"><section class="list" id="list"></section>

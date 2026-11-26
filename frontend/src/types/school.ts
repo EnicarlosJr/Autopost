@@ -14,6 +14,12 @@ export type SchoolTotals = Record<string, {min: number; max: number; items: numb
 export type SchoolListSummary = {
   id: number; school: string; grade: string; year: number; notes: string; refresh_hours: number;
   totals: SchoolTotals; oldest_capture: string | null; missing_links: number; empty_items: number; item_count?: number;
+  public: boolean; turmas: string[]; contact: string; public_url: string; page_url: string; visitors: number;
 };
 
 export type SchoolList = SchoolListSummary & {items: SchoolItem[]};
+
+export type SchoolVisitor = {
+  id: number; list_id: number | null; school: string; student_name: string; turma: string; visits: number;
+  created_at: string | null; last_seen_at: string | null;
+};

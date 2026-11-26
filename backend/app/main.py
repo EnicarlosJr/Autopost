@@ -18,6 +18,7 @@ from app.publications.router import router as publications_router
 from app.searches.router import listings_router, router as searches_router, schedules_router
 from app.campaigns.router import group_sets_router, router as campaigns_router, searches_router as campaign_searches_router
 from app.catalog.router import niches_router, router as catalog_router
+from app.school_lists.router import router as school_lists_router
 
 MEDIA_DIR = Path(os.getenv("MEDIA_DIR", "storage/products"))
 
@@ -59,6 +60,7 @@ app.include_router(campaign_searches_router, dependencies=protected)
 app.include_router(group_sets_router, dependencies=protected)
 app.include_router(catalog_router, dependencies=protected)
 app.include_router(niches_router, dependencies=protected)
+app.include_router(school_lists_router, dependencies=protected)
 
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/media/products", StaticFiles(directory=str(MEDIA_DIR)), name="product-media")

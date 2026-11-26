@@ -4,6 +4,7 @@ import {getConfig, setConfig, MIN_INTERVAL_SECONDS} from './config.js';
 import {prepareUpcoming, processQueueOnce, sendPublication} from './publisher.js';
 import {isSearching, runDueCampaignSearch, runDueSearch} from './searcher.js';
 import {syncCategories} from './catalog.js';
+import {isRefreshingLists, refreshNextListProduct} from './schoollists.js';
 import {isSending, nextSendIn, sendToWhatsApp, whatsappTab, __test_sendInWhatsApp} from './whatsapp.js';
 import {api, apiBase64} from './api.js';
 
@@ -25,9 +26,12 @@ chrome.alarms.onAlarm.addListener(async alarm => {
   const prepared = await prepareUpcoming();
   if (prepared?.prepared || prepared?.skipped === 'busy') return;
   // Buscas só rodam quando não há envio em andamento. As da campanha têm prioridade.
-  if (!isSending() && !isSearching()) {
+  if (!isSending() && !isSearching() && !isRefreshingLists()) {
     const campaign = await runDueCampaignSearch();
-    if (campaign?.skipped === 'none') runDueSearch();
+    if (campaign?.skipped !== 'none') return;
+    const search = await runDueSearch();
+    // Sem busca na hora: reconfere o preço de um produto das listas escolares.
+    if (!search || search.skipped) refreshNextListProduct();
   }
 });
 ensureAlarm();
@@ -61,6 +65,7 @@ async function handle(message, sender) {
       return campaign?.skipped === 'none' ? runDueSearch() : campaign;
     }
     case 'syncCategories': return syncCategories();
+    case 'refreshListProduct': return refreshNextListProduct({force: true});
     case 'testSend': {
       // Ensaio sem enviar: abre o grupo, cola o texto (ou a foto com legenda), confere e apaga.
       const {publication_id: id, group} = message.payload || {};

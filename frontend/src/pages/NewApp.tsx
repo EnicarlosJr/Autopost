@@ -17,6 +17,7 @@ import ProductsPage from './ProductsPage';
 import QueuePage from './QueuePage';
 import SearchesPage from './SearchesPage';
 import SettingsPage from './SettingsPage';
+import {SchoolListEditor, SchoolListsPage} from './SchoolListsPage';
 
 const DRAWER = 248;
 
@@ -52,7 +53,7 @@ function PasswordDialog({open, onClose}: {open: boolean; onClose: () => void}) {
 type Counts = {listings: number; approval: number; failed: number};
 const NAV: {group: string; items: {label: string; to: string; count?: keyof Counts; alert?: boolean}[]}[] = [
   {group: 'Encontrar', items: [{label: 'Buscas', to: '/searches'}, {label: 'Achados', to: '/listings', count: 'listings'}]},
-  {group: 'Publicar', items: [{label: 'Campanhas', to: '/campaigns'}, {label: 'Produtos', to: '/products'}, {label: 'Fila', to: '/queue', count: 'approval'},
+  {group: 'Publicar', items: [{label: 'Campanhas', to: '/campaigns'}, {label: 'Produtos', to: '/products'}, {label: 'Listas escolares', to: '/school-lists'}, {label: 'Fila', to: '/queue', count: 'approval'},
     {label: 'Falhas', to: '/queue?tab=failed', count: 'failed', alert: true}]},
   {group: 'Ajustes', items: [{label: 'Meu perfil', to: '/profile'}, {label: 'Grupos', to: '/groups'}, {label: 'Configurações', to: '/settings'}]},
 ];
@@ -152,6 +153,8 @@ function Shell({email, onLogout}: {email: string; onLogout: () => void}) {
           <Route path="/campaigns" element={<CampaignsPage/>}/>
           <Route path="/campaigns/new" element={<CampaignEditor key="new"/>}/>
           <Route path="/campaigns/:id/edit" element={<CampaignEditor/>}/>
+          <Route path="/school-lists" element={<SchoolListsPage/>}/>
+          <Route path="/school-lists/:id" element={<SchoolListEditor/>}/>
           <Route path="/groups" element={<GroupsPage/>}/>
           <Route path="/profile" element={<ProfilePage/>}/>
           <Route path="/publications" element={<Navigate to="/queue" replace/>}/>

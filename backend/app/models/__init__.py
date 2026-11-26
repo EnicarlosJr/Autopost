@@ -5,3 +5,4 @@ from app.models.user import User
 from app.models.search import GroupSchedule, Listing, PricePoint, Search
 from app.models.campaign import Campaign, CampaignProduct, CampaignSearch, CampaignSearchResult
 from app.models.catalog import FavoriteCategory, MlCategory, Niche, NicheCategory
+from app.models.school import SchoolList, SchoolListItem, SchoolListOption

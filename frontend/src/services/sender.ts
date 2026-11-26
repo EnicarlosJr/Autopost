@@ -77,3 +77,8 @@ export function runSearches(): Promise<{message?: string; skipped?: string; erro
 export function syncCategoriesInBrowser(): Promise<{total: number; roots: number; created: number; inactivated: number}> {
   return callExtension('syncCategories', undefined, 240000);
 }
+
+/** Lê o produto e gera o link de afiliado (meli.la) pela barra de afiliados. Só quando você clica. */
+export function captureWithAffiliateLink(url: string): Promise<BrowserCapture & {affiliate_link?: string}> {
+  return callExtension('capture', {url, affiliate: true}, 150000);
+}

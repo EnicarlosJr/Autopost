@@ -47,11 +47,13 @@ backend/app/
   campaigns/              service.py (filtros, distribuição, ritmo, plano), search_service.py (busca dentro
                           da campanha: extensão busca no site, classifica com domain_discovery, servidor filtra)
   automations/router.py   configurações, forma de envio avulsa, prévia do modelo, logs
+  school_lists/           listas escolares: router.py (lista, itens, 3 opções por item, fila de conferência
+                          /refresh/next, página page.html) e service.py (puro: catálogo, totais, render_page)
   workers/                celery_app.py, tasks.py
 backend/migrations/versions/   0001 → 0019 (0011 catálogo, 0012–0013 busca e regras da campanha,
                                0014 público do nicho, 0015 confiabilidade, 0016–0017 forma de envio,
                                0018 produto de catálogo do anúncio, 0019 padrão do perfil: #publi, selo de desconto,
-                               campanha personalizada)
+                               campanha personalizada, 0020 listas escolares)
 backend/tests/                 pytest (README diz 74 testes); fixture HTML do ML
 extension/
   background.js   service worker: recebe pedidos do painel, roda a fila automática e as buscas
@@ -60,6 +62,7 @@ extension/
                   clicando em "Compartilhar" da barra de afiliados (com novas tentativas)
   reader.js       lê nome, imagem, preços e condição ("no Pix") da página do produto
   searcher.js / search_reader.js   buscas no site do ML (patrocinados de fora, selos loja oficial/Full)
+  schoollists.js  reconfere o preço dos produtos das listas escolares (uma leitura a cada 2 min, sem gerar link)
   catalog.js      baixa o catálogo de categorias pelo Chrome quando o servidor é bloqueado
   publisher.js    envio: reserva (claim), confere preço se velho, ensureAffiliateLink, envia, registra
   whatsapp.js     todos os seletores do WhatsApp Web ficam em sendInWhatsApp: é o único lugar a ajustar.
@@ -148,7 +151,7 @@ Cuidados: o roteiro se baseia em resumos de terceiros dos Termos do ML, então o
 ## Convenções
 
 - Textos de interface, erros e comentários em PT-BR, frases curtas e diretas.
-- Toda mudança de schema vem com migração Alembic numerada (próxima: `0020_…`), idempotente (checa colunas com `inspect`, como as atuais).
+- Toda mudança de schema vem com migração Alembic numerada (próxima: `0021_…`), idempotente (checa colunas com `inspect`, como as atuais).
 - Listas da API aceitam `limit`/`offset` e devolvem `X-Total-Count`.
 - Seletores do WhatsApp só em `whatsapp.js > sendInWhatsApp`; leitura de página só em `reader.js`/`search_reader.js`.
 - Ao mudar regra de negócio: atualizar o teste correspondente e o README.

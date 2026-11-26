@@ -112,6 +112,20 @@ Ao confirmar, a campanha vira publicações agendadas comuns e sai pela mesma fi
 
 Os achados aprovados recebem a categoria oficial identificada pelo Mercado Livre e o termo da busca como tag.
 
+## Listas escolares (orçamento para os pais)
+
+Menu **Publicar > Listas escolares**. Cada lista é a lista de material de uma série (ex.: Maternal II 2027), dividida em **Coletivo** (vai para a escola) e **Individual**.
+
+1. **Nova lista**: escola, série e ano.
+2. **Adicionar itens**: cole a lista da escola, um item por linha. `2 Colas brancas 90 g` ou `Folhas de ofício | 500 folhas` (o que vem depois do `|` ou o número do começo vira "como a escola pede").
+3. **Escolha até 3 produtos por item** (por padrão Econômica, Equilibrada e Premium; o nome é editável). Cole o link do anúncio: o Autopost cadastra o produto e a extensão lê nome, foto e preço no seu Chrome. Em **Qtd.** vai quanto o pai precisa comprar daquele anúncio (ex.: 2 pacotes).
+   - Prefira a **página de catálogo** (`/p/MLB…`): ela é a mesma para todos os vendedores do produto e o Mercado Livre mostra nela a melhor oferta do momento. Assim o preço conferido é sempre o do **mesmo produto** em promoção, e o link continua valendo quando o vendedor mais barato muda. Anúncio avulso (sem `/p/`) aparece como "Anúncio avulso": só aquele anúncio é acompanhado.
+4. **Conferência automática**: com o Chrome aberto, a extensão relê um produto por vez (no máximo um a cada 2 min, quando não há envio nem busca) sempre que o preço tiver mais de 12 h (ajustável por lista). Só lê a página; não gera link. **Atualizar todos os preços** faz a leitura de todos na hora.
+5. **Link de afiliado**: opções sem meli.la aparecem como "Sem link de afiliado" e, na página dos pais, usam o link comum (sem comissão). O botão **Gerar link de afiliado** gera o meli.la daquele produto quando você clica.
+6. **Baixar página de orçamento**: um arquivo `.html` único (sem dependências) para publicar no seu site ou landing. Os pais escolhem a opção de cada item, ajustam a quantidade, desmarcam o que já têm, veem o total e abrem cada item no Mercado Livre (o ML não deixa encher o carrinho de uma vez; a página tem a marcação "Já pus no carrinho"). A página mostra o horário da conferência mais antiga e o aviso #publi do seu perfil. Gere de novo depois de atualizar os preços.
+
+Produto de lista escolar não vira publicação automática; para ofertá-lo no grupo, use Campanhas ou a Fila como qualquer produto.
+
 ## Forma de envio: prévia do link ou foto + texto
 
 Cada campanha escolhe, em **Regras de automação > Forma de envio**:

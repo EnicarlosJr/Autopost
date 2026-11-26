@@ -11,11 +11,17 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 from app.models.product import Product
-from app.models.school import SchoolList, SchoolListItem, SchoolListOption, SchoolVisitor
+from app.models.school import SchoolItemSearch, SchoolList, SchoolListItem, SchoolListOption, SchoolVisitor
+from app.models.search import Listing
+from app.products.urls import normalize_product_url
+from app.school_lists import matching
 
 SECTIONS = ("coletivo", "individual")
 DEFAULT_LABELS = ("Econômica", "Equilibrada", "Premium")
 CLAIM_MINUTES = 10
+SEARCH_LEASE_MINUTES = 10
+ERROR_BACKOFF = timedelta(hours=2)          # conferência que falhou só volta depois de 2 h
+UNAVAILABLE = "indisponível"
 _CATALOG = re.compile(r"/p/(MLB\d+)", re.I)
 _LISTING = re.compile(r"MLB-?U?(\d{6,})", re.I)
 _AFFILIATE = re.compile(r"^https://(meli\.la|(www\.)?mercadolivre\.com(\.br)?/sec)/", re.I)
@@ -76,8 +82,29 @@ def is_affiliate_link(url: str) -> bool:
 
 
 def buy_link(product: Product) -> str:
-    """Link que vai para os pais: o de afiliado quando existe, senão o link comum do produto."""
-    return product.affiliate_url if is_affiliate_link(product.affiliate_url) else product.original_url
+    """Link que vai para os pais: o de afiliado quando existe e abre o produto, senão o link comum."""
+    ok = is_affiliate_link(product.affiliate_url) and product.affiliate_ok is not False
+    return product.affiliate_url if ok else product.original_url
+
+
+def is_unavailable(product: Product) -> bool:
+    return (product.availability or "").startswith(UNAVAILABLE)
+
+
+def effective_price(option: dict) -> float | None:
+    """Preço que todos pagam: o do cartão quando o preço em destaque depende de Pix ou Mercado Pago."""
+    price, regular = option.get("price"), option.get("regular_price")
+    if price is None:
+        return None
+    return regular if regular and regular > price else price
+
+
+def condition_label(option: dict) -> str:
+    """Condição do preço menor ("no Pix", "com Mercado Pago"), quando ele é diferente do preço normal."""
+    if effective_price(option) == option.get("price"):
+        return ""
+    conditions = [c for c in (option.get("price_conditions") or "").split(" · ") if c]
+    return option.get("price_note") or (conditions[0] if conditions else "com desconto no pagamento")
 
 
 def parse_lines(text: str) -> list[dict]:
@@ -103,7 +130,7 @@ def parse_lines(text: str) -> list[dict]:
 
 
 def option_price(option: dict) -> float | None:
-    price = option.get("price")
+    price = None if option.get("unavailable") else effective_price(option)
     return None if price is None else round(price * max(1, option.get("buy_qty") or 1), 2)
 
 
@@ -129,6 +156,8 @@ def option_read(option: SchoolListOption, product: Product) -> dict:
         "watch": option.watch, "last_error": option.last_error or "",
         "product_id": product.id, "title": product.title, "status": product.status,
         "price": product.price, "original_price": product.original_price, "price_note": product.price_note or "",
+        "regular_price": product.regular_price, "price_conditions": product.price_conditions or "",
+        "unavailable": is_unavailable(product), "affiliate_ok": product.affiliate_ok,
         "store": product.store, "image_url": product.image_url, "image_source_url": product.image_source_url or "",
         "original_url": product.original_url, "affiliate_url": product.affiliate_url,
         "has_affiliate_link": is_affiliate_link(product.affiliate_url), "catalog_id": catalog_id(product.original_url),
@@ -145,8 +174,12 @@ def list_detail(db: Session, school_list: SchoolList) -> dict:
     by_item: dict[int, list[dict]] = {}
     for option, product in rows:
         by_item.setdefault(option.item_id, []).append(option_read(option, product))
-    out_items = [{"id": i.id, "section": i.section, "name": i.name, "requested": i.requested, "color": i.color,
-                  "position": i.position, "options": by_item.get(i.id, [])} for i in items]
+    searches = latest_searches(db, ids)
+    out_items = []
+    for i in items:
+        options = by_item.get(i.id, [])
+        out_items.append({"id": i.id, "section": i.section, "name": i.name, "requested": i.requested, "color": i.color,
+                          "position": i.position, "options": options, "search": search_view(searches.get(i.id), i, options)})
     captured = [o["captured_at"] for i in out_items for o in i["options"] if o["captured_at"]]
     return {"id": school_list.id, "school": school_list.school, "grade": school_list.grade, "year": school_list.year,
             "notes": school_list.notes, "refresh_hours": school_list.refresh_hours, "items": out_items,
@@ -155,6 +188,9 @@ def list_detail(db: Session, school_list: SchoolList) -> dict:
             "page_url": f"{public_base()}/escolas/{school_slug(school_list)}/{grade_slug(school_list)}",
             "totals": totals(out_items), "oldest_capture": min(captured) if captured else None,
             "missing_links": sum(1 for i in out_items for o in i["options"] if not o["has_affiliate_link"]),
+            "broken_links": sum(1 for i in out_items for o in i["options"] if o["has_affiliate_link"] and o["affiliate_ok"] is False),
+            "unavailable": sum(1 for i in out_items for o in i["options"] if o["unavailable"]),
+            "suggestions": sum(1 for i in out_items if i["search"] and (any(i["search"]["slots"].values()) or i["search"]["cheaper"])),
             "empty_items": sum(1 for i in out_items if not i["options"]),
             "visitors": db.scalar(select(func.count()).select_from(SchoolVisitor).where(SchoolVisitor.list_id == school_list.id)) or 0}
 
@@ -181,10 +217,210 @@ def next_refresh(db: Session, owner_id: int) -> Product | None:
     return None
 
 
-def finish_refresh(db: Session, product_id: int, error: str = "") -> None:
-    for option in db.scalars(select(SchoolListOption).where(SchoolListOption.product_id == product_id)):
-        option.refresh_claimed_at = None if not error else option.refresh_claimed_at
+def finish_refresh(db: Session, product_id: int, error: str = "", link_ok: bool | None = None,
+                   unavailable: bool = False) -> None:
+    """Fim da conferência de um produto. Nada sai da lista: com erro, o último preço continua e a próxima
+    tentativa espera 2 h; indisponível some da página dos pais e dispara a busca de um substituto."""
+    moment = now()
+    product = db.get(Product, product_id)
+    options = list(db.scalars(select(SchoolListOption).where(SchoolListOption.product_id == product_id)))
+    for option in options:
+        # A reserva vence CLAIM_MINUTES depois da data gravada: com erro, empurra para daqui a 2 h.
+        option.refresh_claimed_at = moment + ERROR_BACKOFF - timedelta(minutes=CLAIM_MINUTES) if error else None
         option.last_error = error[:500]
+    if product is not None:
+        if link_ok is not None:
+            product.affiliate_ok, product.affiliate_checked_at = link_ok, moment
+        if unavailable:
+            product.availability = UNAVAILABLE
+            for option in options:
+                item = db.get(SchoolListItem, option.item_id)
+                school_list = db.get(SchoolList, item.list_id) if item else None
+                if item and school_list and not _searched_recently(db, item.id, timedelta(hours=24), "indisponivel"):
+                    queue_search(db, item, school_list.owner_id, reason="indisponivel")
+    db.commit()
+
+
+# ---------------------------------------------------------------- busca de equivalentes
+
+def set_option(db: Session, item: SchoolListItem, slot: int, product: Product, label: str = "",
+               buy_qty: int | None = None, watch: bool = True) -> SchoolListOption:
+    option = db.scalar(select(SchoolListOption).where(SchoolListOption.item_id == item.id, SchoolListOption.slot == slot))
+    if option is None:
+        option = SchoolListOption(item_id=item.id, slot=slot, product_id=product.id)
+        db.add(option)
+    if buy_qty is None:      # mesmo produto em outra opção: mesma quantidade a comprar
+        buy_qty = db.scalar(select(SchoolListOption.buy_qty).where(SchoolListOption.item_id == item.id,
+                                                                   SchoolListOption.slot != slot).limit(1)) or 1
+    option.product_id, option.label = product.id, (label or "").strip() or DEFAULT_LABELS[slot]
+    option.buy_qty, option.watch, option.last_error, option.refresh_claimed_at = buy_qty, watch, "", None
+    db.flush()
+    return option
+
+
+def _searched_recently(db: Session, item_id: int, window: timedelta, reason: str) -> bool:
+    return db.scalar(select(func.count()).select_from(SchoolItemSearch).where(
+        SchoolItemSearch.item_id == item_id, SchoolItemSearch.reason == reason,
+        SchoolItemSearch.created_at > now() - window)) > 0
+
+
+def queue_search(db: Session, item: SchoolListItem, owner_id: int, reference_product_id: int | None = None,
+                 reason: str = "manual") -> SchoolItemSearch:
+    """Põe a busca do item na fila da extensão (uma por vez por item)."""
+    active = db.scalar(select(SchoolItemSearch).where(SchoolItemSearch.item_id == item.id,
+                                                      SchoolItemSearch.status.in_(("queued", "running")))
+                       .order_by(SchoolItemSearch.id.desc()).limit(1))
+    if active is not None:
+        if active.status == "queued" and reference_product_id:
+            active.reference_product_id = reference_product_id
+        if active.status == "queued" and reason == "indisponivel":
+            active.reason = reason
+        return active
+    search = SchoolItemSearch(owner_id=owner_id, item_id=item.id, reference_product_id=reference_product_id,
+                              reason=reason, status="queued", created_at=now())
+    db.add(search); db.flush()
+    return search
+
+
+def _reference(db: Session, search: SchoolItemSearch, item: SchoolListItem) -> Product | None:
+    product = db.get(Product, search.reference_product_id) if search.reference_product_id else None
+    if product is not None and product.title:
+        return product
+    for candidate in db.scalars(select(Product).join(SchoolListOption, SchoolListOption.product_id == Product.id)
+                                .where(SchoolListOption.item_id == item.id).order_by(SchoolListOption.slot)):
+        if candidate.title:
+            return candidate
+    return product
+
+
+def next_search(db: Session, owner_id: int) -> tuple[SchoolItemSearch, list[dict]] | None:
+    """Para a extensão: a busca mais antiga na fila (ou presa há mais de 10 min), com as páginas a ler."""
+    moment = now()
+    stale = moment - timedelta(minutes=SEARCH_LEASE_MINUTES)
+    rows = db.scalars(select(SchoolItemSearch).where(
+        SchoolItemSearch.owner_id == owner_id,
+        (SchoolItemSearch.status == "queued") | ((SchoolItemSearch.status == "running") & (SchoolItemSearch.started_at < stale)))
+        .order_by(SchoolItemSearch.created_at, SchoolItemSearch.id))
+    for search in rows:
+        item = db.get(SchoolListItem, search.item_id)
+        if item is None:
+            search.status, search.error = "failed", "Item excluído."
+            continue
+        reference = _reference(db, search, item)
+        # Produto acabou de entrar e ainda não foi lido: espera a leitura (até 3 min) para usar o nome dele.
+        if reference is not None and not reference.title and aware(search.created_at) > moment - timedelta(minutes=3):
+            continue
+        terms = matching.build_terms(item.name, item.color, reference.title if reference else "")
+        if not terms:
+            search.status, search.error, search.finished_at = "failed", "Item sem nome para buscar.", moment
+            continue
+        search.terms = json.dumps(terms, ensure_ascii=False)
+        search.status, search.started_at = "running", moment
+        db.commit()
+        return search, terms
+    db.commit()
+    return None
+
+
+def _snapshot(listing: Listing) -> dict:
+    return {"listing_id": listing.id, "external_id": listing.external_id, "url": normalize_product_url(listing.url),
+            "link": listing.url, "title": listing.title, "price": listing.price, "original_price": listing.original_price,
+            "price_note": listing.price_note or "", "image_url": listing.image_url, "seller": listing.seller,
+            "rating": listing.rating, "sold": listing.sold, "official_store": bool(listing.official_store),
+            "fulfillment": bool(listing.fulfillment), "free_shipping": bool(listing.free_shipping),
+            "catalog_product_id": listing.catalog_product_id}
+
+
+def _dismissed(item: SchoolListItem) -> set[str]:
+    try:
+        return set(json.loads(item.dismissed or "[]"))
+    except ValueError:
+        return set()
+
+
+def receive_search(db: Session, search: SchoolItemSearch, items: list[dict], error: str = "") -> SchoolItemSearch:
+    """Resultados lidos pela extensão: confere cada anúncio contra o item e escolhe as sugestões."""
+    from app.campaigns.search_service import suspicious_term
+    from app.searches.service import upsert_listing
+    item = db.get(SchoolListItem, search.item_id)
+    moment = now()
+    if item is None:
+        search.status, search.error, search.finished_at = "failed", "Item excluído.", moment
+        db.commit()
+        return search
+    seen, candidates = set(), []
+    dismissed = _dismissed(item)
+    for raw in items:
+        saved = upsert_listing(db, raw, status="campaign")       # fora da tela Achados
+        if saved is None or saved[0].id in seen:
+            continue
+        seen.add(saved[0].id)
+        if saved[0].external_id not in dismissed:
+            candidates.append(_snapshot(saved[0]))
+    rows = db.execute(select(SchoolListOption, Product).join(Product, Product.id == SchoolListOption.product_id)
+                      .where(SchoolListOption.item_id == item.id)).all()
+    existing = [{"slot": o.slot, "price": effective_price({"price": p.price, "regular_price": p.regular_price}),
+                 "url": p.original_url, "catalog_id": catalog_id(p.original_url)} for o, p in rows if not is_unavailable(p)]
+    empty = [slot for slot in (0, 1, 2) if slot not in {e["slot"] for e in existing}]
+    reference = _reference(db, search, item)
+    ref_title = reference.title if reference else ""
+    result = matching.pick(matching.make_reference(item.name, item.color, ref_title), candidates, existing, empty,
+                           reference_catalog=catalog_id(reference.original_url) if reference else "",
+                           suspicious=suspicious_term)
+    search.suggestions = json.dumps(result, ensure_ascii=False, default=str)
+    search.result_count, search.error, search.finished_at = len(seen), error[:500], moment
+    found = any(result["slots"].values()) or result["cheaper"]
+    search.status = "failed" if error and not seen else ("done" if found else "no_results")
+    db.commit()
+    return search
+
+
+def latest_searches(db: Session, item_ids: list[int]) -> dict[int, SchoolItemSearch]:
+    out: dict[int, SchoolItemSearch] = {}
+    if item_ids:
+        for row in db.scalars(select(SchoolItemSearch).where(SchoolItemSearch.item_id.in_(item_ids))
+                              .order_by(SchoolItemSearch.id.desc())):
+            out.setdefault(row.item_id, row)
+    return out
+
+
+def search_view(search: SchoolItemSearch | None, item: SchoolListItem, options: list[dict]) -> dict | None:
+    """Sugestões ainda válidas: sem as descartadas e sem as que já viraram opção."""
+    if search is None:
+        return None
+    try:
+        data = json.loads(search.suggestions or "{}")
+    except ValueError:
+        data = {}
+    dismissed = _dismissed(item)
+    in_use = {normalize_product_url(o["original_url"]) for o in options}
+    keep = lambda rows: [r for r in rows or [] if r.get("external_id") not in dismissed and r.get("url") not in in_use]
+    filled = {o["slot"] for o in options if not o["unavailable"]}
+    slots = {k: keep(v) for k, v in (data.get("slots") or {}).items() if int(k) not in filled}
+    return {"id": search.id, "status": search.status, "reason": search.reason, "error": search.error,
+            "created_at": aware(search.created_at).isoformat() if search.created_at else None,
+            "finished_at": aware(search.finished_at).isoformat() if search.finished_at else None,
+            "result_count": search.result_count, "accepted": data.get("accepted", 0), "rejected": data.get("rejected", 0),
+            "reasons": data.get("reasons", {}), "slots": slots, "cheaper": keep(data.get("cheaper"))}
+
+
+def use_suggestion(db: Session, item: SchoolListItem, listing_id: int, slot: int) -> Product:
+    """"Usar": o anúncio sugerido vira a opção escolhida (o link de afiliado é gerado em seguida pelo painel)."""
+    from app.searches.service import product_for
+    listing = db.get(Listing, listing_id)
+    if listing is None:
+        raise LookupError("Sugestão não encontrada. Busque de novo.")
+    product = product_for(db, listing)
+    product.availability = ""
+    set_option(db, item, slot, product)
+    db.commit()
+    return product
+
+
+def dismiss_suggestion(db: Session, item: SchoolListItem, external_id: str) -> None:
+    dismissed = _dismissed(item)
+    dismissed.add(external_id.strip().upper()[:40])
+    item.dismissed = json.dumps(sorted(dismissed)[-500:])
     db.commit()
 
 
@@ -194,9 +430,11 @@ def page_data(detail: dict) -> dict:
     """Só o que a página pública precisa (sem ids internos nem endereços locais)."""
     items = []
     for item in detail["items"]:
-        options = [{"label": o["label"], "title": o["title"], "price": o["price"], "original_price": o["original_price"],
+        options = [{"label": o["label"], "title": o["title"], "price": effective_price(o),
+                    "original_price": o["original_price"] if (o["original_price"] or 0) > (effective_price(o) or 0) else None,
+                    "pay_price": o["price"] if condition_label(o) else None, "pay_note": condition_label(o),
                     "qty": o["buy_qty"], "image": o["image_source_url"], "url": buy_link_from(o)}
-                   for o in item["options"] if o["price"] is not None]
+                   for o in item["options"] if o["price"] is not None and not o.get("unavailable")]
         # Item sem opção com preço também aparece (fora do total), para a lista não ficar incompleta.
         items.append({"section": item["section"], "name": item["name"], "requested": item["requested"],
                       "color": item["color"], "options": options, "default": max(0, min(1, len(options) - 1))})
@@ -204,7 +442,8 @@ def page_data(detail: dict) -> dict:
 
 
 def buy_link_from(option: dict) -> str:
-    return option["affiliate_url"] if option["has_affiliate_link"] else option["original_url"]
+    ok = option["has_affiliate_link"] and option.get("affiliate_ok") is not False
+    return option["affiliate_url"] if ok else option["original_url"]
 
 
 def render_page(detail: dict, disclosure: str = "#publi", checked_at: datetime | None = None,
@@ -336,7 +575,7 @@ h1{display:inline;font-size:25px;line-height:1.3;margin:0;letter-spacing:-.015em
 .qty span{min-width:24px;text-align:center;font-weight:800}
 .price{display:flex;flex-direction:column;align-items:flex-end;text-align:right;gap:2px}
 .price b{font-size:21px;line-height:1.15;letter-spacing:-.01em}.was{font-size:12px;color:var(--muted)}.was s{margin-left:6px}
-.each{font-size:12px;color:var(--muted)}.pct{background:var(--coral2);color:var(--coral);border-radius:6px;padding:1px 6px;font-weight:800}
+.each{font-size:12px;color:var(--muted)}.pay{font-size:12px;font-weight:700;color:var(--mint);background:var(--mint2);border-radius:6px;padding:1px 6px}.pct{background:var(--coral2);color:var(--coral);border-radius:6px;padding:1px 6px;font-weight:800}
 .acts{grid-area:acts;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
 .buy{grid-column:1/-1;display:flex;align-items:center;justify-content:center;gap:8px;min-height:48px;border-radius:12px;background:var(--navy);color:#fff;font-weight:800;text-decoration:none;box-shadow:0 3px 10px rgba(36,53,122,.22)}
 .buy::after{content:"→";font-weight:700}.buy:hover{background:var(--navy2)}
@@ -390,7 +629,7 @@ button:focus-visible,a:focus-visible{outline:3px solid var(--sun);outline-offset
 <div><div class="row"><span class="label">No carrinho</span><b id="cartLabel"></b></div><div class="bar"><i id="cartBar"></i></div></div>
 <div class="split" id="split"></div>
 <button class="btn2" onclick="window.print()">Imprimir ou salvar em PDF</button>
-<p class="small">Preços conferidos em {{STAMP}}. O preço e o estoque finais são os do Mercado Livre na hora da compra. O Mercado Livre não deixa colocar vários produtos no carrinho de uma vez: abra cada item e marque "Pus no carrinho".</p>
+<p class="small">Preços conferidos em {{STAMP}}. O total usa o preço no cartão; descontos no Pix ou com Mercado Pago aparecem em verde em cada item. O preço e o estoque finais são os do Mercado Livre na hora da compra. O Mercado Livre não deixa colocar vários produtos no carrinho de uma vez: abra cada item e marque "Pus no carrinho".</p>
 </div></aside></div>
 </main>
 <div class="mbar"><div class="in"><div><small id="mbLabel"></small><b id="mbTotal"></b></div>
@@ -439,7 +678,7 @@ function card(it, i) {
   const each = s.qty > 1 ? brl(o.price) + ' cada' : '';
   return `<article class="card${s.cart ? ' done' : ''}">${img}${info}${opts}
     <div class="foot"><div class="qty"><button data-i="${i}" data-act="minus" aria-label="Diminuir quantidade">−</button><span>${s.qty}</span><button data-i="${i}" data-act="plus" aria-label="Aumentar quantidade">+</button></div>
-    <div class="price">${pct >= 5 ? `<span class="was"><span class="pct">-${pct}%</span><s>${brl(o.original_price * s.qty)}</s></span>` : ''}<b>${brl(o.price * s.qty)}</b>${each ? `<span class="each">${each}</span>` : ''}</div></div>
+    <div class="price">${pct >= 5 ? `<span class="was"><span class="pct">-${pct}%</span><s>${brl(o.original_price * s.qty)}</s></span>` : ''}<b>${brl(o.price * s.qty)}</b>${o.pay_price ? `<span class="pay">${brl(o.pay_price * s.qty)} ${esc(o.pay_note)}</span>` : ''}${each ? `<span class="each">${each}</span>` : ''}</div></div>
     <div class="acts"><a class="buy" href="${esc(o.url)}" target="_blank" rel="noopener sponsored">Comprar no Mercado Livre</a>
     <button class="tog" data-i="${i}" data-act="cart" aria-pressed="${s.cart}">${s.cart ? '✓ No carrinho' : 'Pus no carrinho'}</button>
     <button class="link" data-i="${i}" data-act="have">Já tenho</button></div></article>`;

@@ -2,7 +2,7 @@
 import {captureProduct, capture, __test_generateAffiliateLink} from './capture.js';
 import {getConfig, setConfig, MIN_INTERVAL_SECONDS} from './config.js';
 import {prepareUpcoming, processQueueOnce, sendPublication} from './publisher.js';
-import {isSearching, runDueCampaignSearch, runDueSearch} from './searcher.js';
+import {isSearching, runDueCampaignSearch, runDueSchoolSearch, runDueSearch} from './searcher.js';
 import {syncCategories} from './catalog.js';
 import {isRefreshingLists, refreshNextListProduct} from './schoollists.js';
 import {isSending, nextSendIn, sendToWhatsApp, whatsappTab, __test_sendInWhatsApp} from './whatsapp.js';
@@ -29,6 +29,9 @@ chrome.alarms.onAlarm.addListener(async alarm => {
   if (!isSending() && !isSearching() && !isRefreshingLists()) {
     const campaign = await runDueCampaignSearch();
     if (campaign?.skipped !== 'none') return;
+    // Equivalentes das listas escolares: você está esperando as sugestões na tela.
+    const school = await runDueSchoolSearch();
+    if (school && !school.skipped) return;
     const search = await runDueSearch();
     // Sem busca na hora: reconfere o preço de um produto das listas escolares.
     if (!search || search.skipped) refreshNextListProduct();
@@ -66,6 +69,11 @@ async function handle(message, sender) {
     }
     case 'syncCategories': return syncCategories();
     case 'refreshListProduct': return refreshNextListProduct({force: true});
+    case 'runSchoolSearch': {
+      // Pedido pelo painel ("Buscar equivalentes"): roda agora se não há outra busca em andamento.
+      if (isSearching()) return {skipped: 'running'};
+      return runDueSchoolSearch();
+    }
     case 'testSend': {
       // Ensaio sem enviar: abre o grupo, cola o texto (ou a foto com legenda), confere e apaga.
       const {publication_id: id, group} = message.payload || {};

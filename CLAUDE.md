@@ -47,8 +47,10 @@ backend/app/
   campaigns/              service.py (filtros, distribuição, ritmo, plano), search_service.py (busca dentro
                           da campanha: extensão busca no site, classifica com domain_discovery, servidor filtra)
   automations/router.py   configurações, forma de envio avulsa, prévia do modelo, logs
-  school_lists/           listas escolares: router.py (lista, itens, 3 opções por item, fila de conferência
-                          /refresh/next, página page.html, /api/school-visitors), public.py (páginas sem login
+  school_lists/           listas escolares: matching.py (puro: equivalentes do item, medida/cor/kit/variação,
+                          escolha por opção e "mais barato"), router.py (lista, itens, 3 opções por item, fila de conferência
+                          /refresh/next, busca de equivalentes /items/{id}/search e /api/school-searches/due|results,
+                          sugestões use/dismiss, página page.html, /api/school-visitors), public.py (páginas sem login
                           /escolas/<escola>[/<série>]: identificação por nome do aluno + turma, cookie com token)
                           e service.py (puro: catálogo, totais, render_page, render_landing, slugs)
   workers/                celery_app.py, tasks.py
@@ -56,7 +58,8 @@ backend/migrations/versions/   0001 → 0019 (0011 catálogo, 0012–0013 busca 
                                0014 público do nicho, 0015 confiabilidade, 0016–0017 forma de envio,
                                0018 produto de catálogo do anúncio, 0019 padrão do perfil: #publi, selo de desconto,
                                campanha personalizada, 0020 listas escolares,
-                               0021 página pública e responsáveis)
+                               0021 página pública e responsáveis, 0022 busca de equivalentes, preço no cartão
+                               e condições (regular_price, price_conditions), conferência do link (affiliate_ok))
 backend/tests/                 pytest (README diz 74 testes); fixture HTML do ML
 extension/
   background.js   service worker: recebe pedidos do painel, roda a fila automática e as buscas
@@ -66,6 +69,7 @@ extension/
   reader.js       lê nome, imagem, preços e condição ("no Pix") da página do produto
   searcher.js / search_reader.js   buscas no site do ML (patrocinados de fora, selos loja oficial/Full)
   schoollists.js  reconfere o preço dos produtos das listas escolares (uma leitura a cada 2 min, sem gerar link)
+                  e confere se o meli.la abre o produto; a busca de equivalentes fica em searcher.js (runDueSchoolSearch)
   catalog.js      baixa o catálogo de categorias pelo Chrome quando o servidor é bloqueado
   publisher.js    envio: reserva (claim), confere preço se velho, ensureAffiliateLink, envia, registra
   whatsapp.js     todos os seletores do WhatsApp Web ficam em sendInWhatsApp: é o único lugar a ajustar.
@@ -95,6 +99,7 @@ tests_e2e/        Playwright com páginas simuladas do ML e do WhatsApp (7 teste
 - **Perfil = `automation_rules` (linha única).** Editado em Meu perfil > Mensagem e foto (`StyleSettings.tsx`, `TemplateEditor.tsx`); Configurações ficou só com a automação dos produtos e o histórico.
 - **Foto (`social_image.compose`):** desenhada em 2x e reduzida (bordas suaves); selo #publi no canto superior esquerdo, selo de desconto (≥ 5%) no superior direito, faixa no rodapé com grupo à esquerda e Instagram à direita (fonte encolhe para caber); com selo, o topo ganha respiro. Cache em disco com chave `v2|…`.
 - **Forma de envio** (`send_mode`): `preview` (só texto; o WhatsApp monta o cartão do link) ou foto + texto (imagem 1080x1080 com legenda e marca d'água opcional). Definida por campanha, pelas Configurações para ofertas avulsas, e por publicação (`send_mode_choice`) na Fila.
+- **Listas escolares:** preço da página dos pais = `regular_price` (cartão) quando o destaque depende de Pix/Mercado Pago; `price` continua sendo o preço em destaque (usado nas mensagens). `availability = "indisponível"` tira a opção da página dos pais sem apagar nada. Equivalentes só sugerem (regra 9).
 - **Produto:** `pending` → `processed` | `needs_review` | `awaiting_browser` (ML: a extensão completa os dados).
 - **Publicação, ativos:** `pending`, `awaiting_approval`, `approved` (Prontas), `scheduled`, `sending`, `paused`. **Finais:** `sent`, `failed`, `cancelled`.
 - **Busca da campanha:** `queued` → buscando → concluída / sem resultados / falhou (com lease de 10 min, até 10 termos).
@@ -154,7 +159,7 @@ Cuidados: o roteiro se baseia em resumos de terceiros dos Termos do ML, então o
 ## Convenções
 
 - Textos de interface, erros e comentários em PT-BR, frases curtas e diretas.
-- Toda mudança de schema vem com migração Alembic numerada (próxima: `0022_…`), idempotente (checa colunas com `inspect`, como as atuais).
+- Toda mudança de schema vem com migração Alembic numerada (próxima: `0023_…`), idempotente (checa colunas com `inspect`, como as atuais).
 - Listas da API aceitam `limit`/`offset` e devolvem `X-Total-Count`.
 - Seletores do WhatsApp só em `whatsapp.js > sendInWhatsApp`; leitura de página só em `reader.js`/`search_reader.js`.
 - Ao mudar regra de negócio: atualizar o teste correspondente e o README.

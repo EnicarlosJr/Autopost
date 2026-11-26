@@ -37,6 +37,8 @@ class SchoolListItem(Base):
     requested: Mapped[str] = mapped_column(String(120), default="")      # como a escola pede: "500 folhas", "2 caixas"
     color: Mapped[str] = mapped_column(String(160), default="")
     position: Mapped[int] = mapped_column(Integer, default=0)
+    # Anúncios sugeridos que você descartou (ids MLB, JSON): não voltam nas próximas buscas.
+    dismissed: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 class SchoolListOption(Base):
@@ -73,3 +75,25 @@ class SchoolVisitor(Base):
     visits: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class SchoolItemSearch(Base):
+    """Busca de equivalentes de um item: a extensão lê o Mercado Livre e o servidor escolhe as sugestões.
+
+    Só sugere: nada entra na lista sem o clique em "Usar".
+    """
+    __tablename__ = "school_item_searches"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("school_list_items.id", ondelete="CASCADE"), index=True)
+    # Produto que serve de modelo (o que você acabou de escolher); vazio = a primeira opção do item.
+    reference_product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
+    reason: Mapped[str] = mapped_column(String(40), default="manual")          # manual | nova_opcao | indisponivel
+    status: Mapped[str] = mapped_column(String(20), default="queued", index=True)  # queued | running | done | no_results | failed
+    terms: Mapped[str] = mapped_column(Text, default="[]")
+    suggestions: Mapped[str] = mapped_column(Text, default="{}")
+    result_count: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str] = mapped_column(String(500), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -66,7 +66,7 @@ export async function classify(items) {
   return items;
 }
 
-async function readTerms(terms) {
+async function readTerms(terms, {categorize = true} = {}) {
   const items = [];
   let error = '';
   for (const [index, {term, url}] of terms.entries()) {
@@ -81,7 +81,7 @@ async function readTerms(terms) {
       error = `Falha ao ler "${term}": ${e.message || e}`;
     }
   }
-  await classify(items);
+  if (categorize) await classify(items);
   return {items: items.slice(0, 600), error};
 }
 
@@ -101,6 +101,28 @@ export async function runDueCampaignSearch() {
     return summary;
   } catch (e) {
     log('erro na busca da campanha', e);
+    return {error: e.message || String(e)};
+  } finally {
+    running = false;
+  }
+}
+
+/** Busca de equivalentes de um item das listas escolares (o mesmo produto em outras ofertas e marcas). */
+export async function runDueSchoolSearch() {
+  if (running) return {skipped: 'running'};
+  const {apiToken} = await chrome.storage.local.get('apiToken');
+  if (!apiToken) return {skipped: 'no-login'};
+  running = true;
+  try {
+    const due = await api('/school-searches/due');
+    if (!due) return {skipped: 'none'};
+    log('lista escolar: buscando equivalentes', due.item_id, due.terms.map(t => t.term));
+    const {items, error} = await readTerms(due.terms, {categorize: false});
+    const summary = await api(`/school-searches/${due.id}/results`, {method: 'POST', body: {items, error}});
+    log('busca de equivalentes concluída', summary);
+    return summary;
+  } catch (e) {
+    log('erro na busca de equivalentes', e);
     return {error: e.message || String(e)};
   } finally {
     running = false;

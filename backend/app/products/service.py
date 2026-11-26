@@ -110,10 +110,17 @@ def apply_capture(db: Session, product: Product, data, *, generate: bool = False
     old_links = [u for u in (product.affiliate_url, product.original_url) if u]
     if link.startswith("https://") and " " not in link:
         product.affiliate_url = link
-    if data.price is not None:
+    if getattr(data, "available", True) is False:
+        # Acabou ou pausou: guarda o aviso e mantém o último preço (nada some da lista sozinho).
+        product.availability = "indisponível"
+    elif data.price is not None:
         product.price = data.price
         product.original_price = data.original_price if data.original_price and data.original_price > data.price else None
         product.price_note = data.price_note.strip()
+        regular = getattr(data, "regular_price", None)
+        product.regular_price = regular if regular and regular > data.price else None
+        product.price_conditions = (getattr(data, "price_conditions", "") or "").strip()[:300]
+        product.availability = ""
         product.data_source = "browser"
         product.captured_at = now()
     remove_notes(product, VERIFICATION_NOTICE, BROWSER_NOTICE, "solicitou verificação", "Falha na extração:",

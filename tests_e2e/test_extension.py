@@ -54,6 +54,8 @@ def test_reader_gets_previous_price_and_pix_from_mercado_livre(browser):
     data = worker.evaluate(f"chrome.scripting.executeScript({{target:{{tabId:{tab}}}, files:['reader.js']}}).then(r => r[0].result)")
     page.close()
     assert data["price"] == 4435 and data["original_price"] == 7999.9 and data["price_note"] == "no Pix"
+    # "ou R$ 4.580 em 10x sem juros": preço no cartão, usado no total da página dos pais.
+    assert data["regular_price"] == 4580 and data["price_conditions"] == "no Pix" and data["available"] is True
 
 
 @pytest.mark.parametrize("group, open_chat, expect", [

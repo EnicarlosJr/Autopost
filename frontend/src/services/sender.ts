@@ -10,6 +10,7 @@ export type SendResult = {sent: boolean; confirmed?: boolean; group: string; pre
 export type BrowserCapture = {
   title: string; description: string; image_url: string; price: number|null; original_price: number|null;
   price_note: string; store: string; page_url: string; canonical_url?: string;
+  regular_price?: number | null; price_conditions?: string; available?: boolean;
 };
 
 type Pending = {resolve: (value: any) => void; reject: (error: Error) => void; timer: number};
@@ -81,4 +82,9 @@ export function syncCategoriesInBrowser(): Promise<{total: number; roots: number
 /** Lê o produto e gera o link de afiliado (meli.la) pela barra de afiliados. Só quando você clica. */
 export function captureWithAffiliateLink(url: string): Promise<BrowserCapture & {affiliate_link?: string}> {
   return callExtension('capture', {url, affiliate: true}, 150000);
+}
+
+/** Roda agora a próxima busca de equivalentes das listas escolares (lê o Mercado Livre no seu Chrome). */
+export function runSchoolSearch(): Promise<{status?: string; skipped?: string; error?: string} | null> {
+  return callExtension('runSchoolSearch', undefined, 240000);
 }

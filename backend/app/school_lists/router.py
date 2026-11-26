@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.deps import require_user
 from app.database.session import get_db
 from app.models.product import Product
-from app.models.school import SchoolList, SchoolListItem, SchoolListOption, SchoolVisitor
+from app.models.school import SchoolItemSearch, SchoolList, SchoolListItem, SchoolListOption, SchoolVisitor
 from app.models.user import User
 from app.products.service import add_note
 from app.products.sources import BROWSER_NOTICE, marketplace_of, needs_browser
@@ -62,6 +62,21 @@ class OptionPatch(BaseModel):
 
 class RefreshDone(BaseModel):
     error: str = Field(default="", max_length=500)
+    # Conferência do link de afiliado feita pela extensão (None = não conferiu).
+    link_ok: bool | None = None
+    # A loja disse que o produto acabou ou o anúncio está pausado.
+    unavailable: bool = False
+
+class UseSuggestion(BaseModel):
+    listing_id: int
+    slot: int = Field(ge=0, le=2)
+
+class DismissSuggestion(BaseModel):
+    external_id: str = Field(min_length=3, max_length=40)
+
+class SearchResults(BaseModel):
+    items: list[dict] = Field(default_factory=list, max_length=600)
+    error: str = Field(default="", max_length=500)
 
 
 def _list(db: Session, user: User, list_id: int) -> SchoolList:
@@ -111,7 +126,14 @@ def refresh_next(db: Session = Depends(get_db), user: User = Depends(require_use
 
 @router.post("/refresh/{product_id}/done")
 def refresh_done(product_id: int, data: RefreshDone, db: Session = Depends(get_db), user: User = Depends(require_user)):
-    service.finish_refresh(db, product_id, data.error.strip())
+    product = db.get(Product, product_id)
+    owned = db.scalar(select(func.count()).select_from(SchoolListOption)
+                      .join(SchoolListItem, SchoolListItem.id == SchoolListOption.item_id)
+                      .join(SchoolList, SchoolList.id == SchoolListItem.list_id)
+                      .where(SchoolListOption.product_id == product_id, SchoolList.owner_id == user.id))
+    if product is None or not owned:
+        raise HTTPException(404, "Produto não está nas suas listas")
+    service.finish_refresh(db, product_id, data.error.strip(), data.link_ok, data.unavailable)
     return {"ok": True}
 
 @router.get("/{list_id}")
@@ -199,16 +221,38 @@ def set_option(item_id: int, slot: int, data: OptionWrite, db: Session = Depends
             db.add(product); db.flush()
     else:
         raise HTTPException(422, "Cole o link do produto ou escolha um produto cadastrado.")
-    option = db.scalar(select(SchoolListOption).where(SchoolListOption.item_id == item.id, SchoolListOption.slot == slot))
-    if option is None:
-        option = SchoolListOption(item_id=item.id, slot=slot, product_id=product.id)
-        db.add(option)
-    option.product_id, option.label = product.id, data.label.strip() or service.DEFAULT_LABELS[slot]
-    option.buy_qty, option.watch, option.last_error, option.refresh_claimed_at = data.buy_qty, data.watch, "", None
+    service.set_option(db, item, slot, product, data.label, data.buy_qty, data.watch)
+    # Produto novo na lista: procura o mesmo produto para as outras opções e um mais barato.
+    service.queue_search(db, item, user.id, product.id, reason="nova_opcao")
     db.commit()
     detail = service.list_detail(db, _list(db, user, item.list_id))
     detail["product_id"] = product.id
     return detail
+
+@router.post("/items/{item_id}/search")
+def search_equivalents(item_id: int, db: Session = Depends(get_db), user: User = Depends(require_user)):
+    """Procura no Mercado Livre (pela extensão) o mesmo produto em outras ofertas e marcas."""
+    item = _item(db, user, item_id)
+    service.queue_search(db, item, user.id, reason="manual")
+    db.commit()
+    return service.list_detail(db, _list(db, user, item.list_id))
+
+@router.post("/items/{item_id}/suggestions/use")
+def use_suggestion(item_id: int, data: UseSuggestion, db: Session = Depends(get_db), user: User = Depends(require_user)):
+    item = _item(db, user, item_id)
+    try:
+        product = service.use_suggestion(db, item, data.listing_id, data.slot)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    detail = service.list_detail(db, _list(db, user, item.list_id))
+    detail["product_id"] = product.id
+    return detail
+
+@router.post("/items/{item_id}/suggestions/dismiss")
+def dismiss_suggestion(item_id: int, data: DismissSuggestion, db: Session = Depends(get_db), user: User = Depends(require_user)):
+    item = _item(db, user, item_id)
+    service.dismiss_suggestion(db, item, data.external_id)
+    return service.list_detail(db, _list(db, user, item.list_id))
 
 @router.patch("/items/{item_id}/options/{slot}")
 def update_option(item_id: int, slot: int, data: OptionPatch, db: Session = Depends(get_db), user: User = Depends(require_user)):
@@ -292,3 +336,23 @@ def delete_visitors(data: VisitorIds, db: Session = Depends(get_db), user: User 
         db.delete(v)
     db.commit()
     return {"deleted": len(rows)}
+
+
+searches_router = APIRouter(prefix="/api/school-searches", tags=["school-lists"])
+
+@searches_router.get("/due")
+def search_due(db: Session = Depends(get_db), user: User = Depends(require_user)):
+    """Para a extensão: a próxima busca de equivalentes (ou nada)."""
+    found = service.next_search(db, user.id)
+    if found is None:
+        return None
+    search, terms = found
+    return {"id": search.id, "item_id": search.item_id, "terms": terms}
+
+@searches_router.post("/{search_id}/results")
+def search_results(search_id: int, data: SearchResults, db: Session = Depends(get_db), user: User = Depends(require_user)):
+    search = db.get(SchoolItemSearch, search_id)
+    if search is None or search.owner_id != user.id:
+        raise HTTPException(404, "Busca não encontrada")
+    search = service.receive_search(db, search, data.items, data.error.strip())
+    return {"id": search.id, "status": search.status, "result_count": search.result_count}

@@ -5,8 +5,8 @@ import {Link, useNavigate, useParams} from 'react-router-dom';
 import {Alert, Box, Button, Card, Chip, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, LinearProgress, Stack, Switch,
   Tab, Tabs, TextField, Tooltip, Typography} from '@mui/material';
 import {api, apiError} from '../services/api';
-import {captureInBrowser, captureWithAffiliateLink} from '../services/sender';
-import type {SchoolItem, SchoolList, SchoolListSummary, SchoolOption, SchoolSection} from '../types/school';
+import {captureInBrowser, captureWithAffiliateLink, runSchoolSearch} from '../services/sender';
+import type {SchoolItem, SchoolList, SchoolListSummary, SchoolOption, SchoolSearch, SchoolSection, SchoolSuggestion} from '../types/school';
 import {Empty, Feedback, Loading} from '../components/Feedback';
 import {Meta, PageHeader, PriceTag} from '../components/Ui';
 import {useConfirm} from '../components/Bulk';
@@ -35,6 +35,26 @@ function range(t?: {min: number; max: number; items: number; priced: number}) {
 async function readProduct(option: {product_id: number; original_url: string; affiliate_url: string}) {
   const data = await captureInBrowser(option.original_url, option.affiliate_url);
   await api.post(`/products/${option.product_id}/browser-data`, data);
+}
+
+const needsLink = (o: SchoolOption) => !o.has_affiliate_link || o.affiliate_ok === false;
+
+/** Lê o produto e, se faltar (ou não abrir), gera o link de afiliado. Se o link falhar, grava ao menos o preço. */
+async function readWithLink(option: SchoolOption): Promise<string> {
+  if (!needsLink(option)) { await readProduct(option); return ''; }
+  try {
+    const data = await captureWithAffiliateLink(option.original_url);
+    await api.post(`/products/${option.product_id}/browser-data`, data);
+    return '';
+  } catch (e) {
+    await readProduct(option).catch(() => {});
+    return `Produto lido, mas o link de afiliado não foi gerado: ${apiError(e, 'erro na extensão')}`;
+  }
+}
+
+/** Pede à extensão a busca de equivalentes que estiver na fila (sem esperar: a tela recarrega sozinha). */
+function kickSchoolSearch(onDone: () => void) {
+  runSchoolSearch().catch(() => null).finally(onDone);
 }
 
 // ------------------------------------------------------------------ lista das listas
@@ -116,9 +136,13 @@ function OptionCard({list, item, slot, option, onChange, onError, onNotice}: {li
       {url: url.trim(), label: option?.label || '', buy_qty: option?.buy_qty || 1, watch: option?.watch ?? true});
     onChange(r.data); setUrl(''); setEditing(false);
     const saved = r.data.items.find(i => i.id === item.id)?.options.find(o => o.slot === slot);
-    if (saved && saved.price == null) {
-      try { await readProduct(saved); await reload(); }
+    if (saved) {
+      setBusy('Lendo e gerando o link…');
+      try { const warning = await readWithLink(saved); if (warning) onError(warning); }
       catch (e) { onError(`Produto salvo, mas a leitura pelo navegador falhou: ${apiError(e, 'erro na extensão')}`); }
+      await reload();
+      // Com o produto lido, a extensão procura o mesmo produto para as outras opções e um mais barato.
+      kickSchoolSearch(() => { reload().catch(() => {}); });
     }
   });
   const patch = (body: Partial<SchoolOption>) => run('Salvando…', async () => {
@@ -152,13 +176,21 @@ function OptionCard({list, item, slot, option, onChange, onError, onNotice}: {li
         <PriceTag price={option.price} original={option.original_price} note={option.price_note} size="sm"/>
       </Box>
     </Stack>
-    <Meta items={[option.store, ago(option.captured_at), option.price != null && option.buy_qty > 1 && `${option.buy_qty} × = ${brl(option.price * option.buy_qty)}`]}/>
+    {option.regular_price != null && option.price != null && option.regular_price > option.price &&
+      <Typography fontSize={12.5} color="text.secondary">Na página dos pais: <b>{brl(option.regular_price)}</b> no cartão · {brl(option.price)} {option.price_note || 'com desconto'}</Typography>}
+    {option.price_conditions && <Typography fontSize={12} color="text.secondary">Condições vistas no ML: {option.price_conditions}</Typography>}
+    <Meta items={[option.store, ago(option.captured_at), option.price != null && option.buy_qty > 1 && `${option.buy_qty} × = ${brl((option.regular_price && option.regular_price > option.price ? option.regular_price : option.price) * option.buy_qty)}`]}/>
     <Stack direction="row" gap={.75} flexWrap="wrap">
       {option.catalog_id ? <Chip size="small" color="success" variant="outlined" label={`Catálogo ${option.catalog_id}`}/>
         : <Tooltip title="Anúncio sem página de catálogo: o Autopost acompanha só este anúncio, não as outras ofertas do mesmo produto.">
           <Chip size="small" color="warning" variant="outlined" label="Anúncio avulso"/></Tooltip>}
-      <Chip size="small" variant="outlined" color={option.has_affiliate_link ? 'success' : 'warning'}
-        label={option.has_affiliate_link ? 'Com link de afiliado' : 'Sem link de afiliado'}/>
+      {option.has_affiliate_link && option.affiliate_ok === false
+        ? <Tooltip title="Na última conferência o link meli.la não abriu o produto. A página dos pais usa o link comum (sem comissão) até você gerar de novo.">
+          <Chip size="small" color="error" variant="outlined" label="Link não abre"/></Tooltip>
+        : <Chip size="small" variant="outlined" color={option.has_affiliate_link ? 'success' : 'warning'}
+          label={option.has_affiliate_link ? (option.affiliate_ok ? 'Link de afiliado conferido' : 'Com link de afiliado') : 'Sem link de afiliado'}/>}
+      {option.unavailable && <Tooltip title="O Mercado Livre disse que acabou ou pausou. O item continua na lista; esta opção sai da página dos pais até voltar, e o Autopost procura um substituto.">
+        <Chip size="small" color="error" label="Indisponível no ML"/></Tooltip>}
     </Stack>
     {option.last_error && <Typography fontSize={12.5} color="error.main">Última conferência falhou: {option.last_error}</Typography>}
     <Stack direction="row" alignItems="center" gap={.5}>
@@ -168,15 +200,100 @@ function OptionCard({list, item, slot, option, onChange, onError, onNotice}: {li
     <Stack direction="row" gap={.75} flexWrap="wrap">
       <Button size="small" variant={stale ? 'contained' : 'outlined'} disabled={Boolean(busy)}
         onClick={() => run('Lendo…', async () => { await readProduct(option); await reload(); onNotice('Preço atualizado.'); })}>{busy === 'Lendo…' ? busy : 'Ler agora'}</Button>
-      {!option.has_affiliate_link && <Button size="small" variant="outlined" disabled={Boolean(busy)}
+      {needsLink(option) && <Button size="small" variant="outlined" disabled={Boolean(busy)}
         onClick={() => run('Gerando link…', async () => {
           const data = await captureWithAffiliateLink(option.original_url);
           await api.post(`/products/${option.product_id}/browser-data`, data); await reload(); onNotice('Link de afiliado gravado.');
-        })}>{busy === 'Gerando link…' ? busy : 'Gerar link de afiliado'}</Button>}
+        })}>{busy === 'Gerando link…' ? busy : option.has_affiliate_link ? 'Gerar link de novo' : 'Gerar link de afiliado'}</Button>}
       <Button size="small" disabled={Boolean(busy)} onClick={() => setEditing(true)}>Trocar</Button>
       <Button size="small" color="error" disabled={Boolean(busy)}
         onClick={() => run('Removendo…', async () => onChange((await api.delete<SchoolList>(`/school-lists/items/${item.id}/options/${slot}`)).data))}>Remover</Button>
     </Stack>
+  </Box>;
+}
+
+const SLOT_NAME = (item: SchoolItem, slot: number) =>
+  item.options.find(o => o.slot === slot)?.label || ['Econômica', 'Equilibrada', 'Premium'][slot];
+
+function SuggestionRow({s, action, busy, onUse, onDismiss}: {s: SchoolSuggestion; action: string; busy: boolean; onUse: () => void; onDismiss: () => void}) {
+  return <Stack direction={{xs: 'column', sm: 'row'}} gap={1.25} alignItems={{sm: 'center'}} sx={{p: 1, borderRadius: 1.5, border: `1px solid ${tokens.line}`, bgcolor: '#fff'}}>
+    <Stack direction="row" gap={1.25} flex={1} minWidth={0} alignItems="center">
+      {s.image_url ? <Box component="img" src={s.image_url} alt="" referrerPolicy="no-referrer" sx={{width: 52, height: 52, objectFit: 'contain', borderRadius: 1, flexShrink: 0}}/>
+        : <Box sx={{width: 52, height: 52, borderRadius: 1, bgcolor: tokens.paper, flexShrink: 0}}/>}
+      <Box minWidth={0}>
+        <Typography fontSize={13.5} fontWeight={600} sx={{display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden'}}>{s.title}</Typography>
+        <Stack direction="row" gap={.5} flexWrap="wrap" mt={.25}>
+          {s.signals.map(x => <Chip key={x} size="small" label={x} variant="outlined" sx={{height: 20, fontSize: 11.5}}/>)}
+        </Stack>
+      </Box>
+    </Stack>
+    <Stack direction="row" gap={1} alignItems="center" justifyContent="flex-end">
+      <Box textAlign="right"><PriceTag price={s.price} original={s.original_price} note={s.price_note} size="sm"/></Box>
+      <Button size="small" variant="contained" disabled={busy} onClick={onUse}>{action}</Button>
+      <Button size="small" component="a" href={s.link} target="_blank" rel="noopener">Ver</Button>
+      <Button size="small" color="inherit" disabled={busy} onClick={onDismiss}>Descartar</Button>
+    </Stack>
+  </Stack>;
+}
+
+const SEARCH_STATUS: Record<SchoolSearch['status'], string> = {
+  queued: 'Na fila: a extensão vai buscar no Mercado Livre pelo seu Chrome.', running: 'Buscando no Mercado Livre pelo seu Chrome…',
+  done: '', no_results: 'Nenhum anúncio igual passou na conferência.', failed: 'A busca falhou.',
+};
+
+function Suggestions({list, item, onChange, onError, onNotice}: {list: SchoolList; item: SchoolItem; onChange: (l: SchoolList) => void; onError: (m: string) => void; onNotice: (m: string) => void}) {
+  const [busy, setBusy] = useState(false);
+  const search = item.search;
+  const reload = async () => onChange((await api.get<SchoolList>(`/school-lists/${list.id}`)).data);
+  const start = async () => {
+    setBusy(true);
+    try { onChange((await api.post<SchoolList>(`/school-lists/items/${item.id}/search`)).data); kickSchoolSearch(() => { reload().catch(() => {}); }); }
+    catch (e) { onError(apiError(e, 'Não foi possível buscar.')); }
+    finally { setBusy(false); }
+  };
+  const use = async (s: SchoolSuggestion, slot: number) => {
+    setBusy(true);
+    try {
+      const r = await api.post<SchoolList>(`/school-lists/items/${item.id}/suggestions/use`, {listing_id: s.listing_id, slot});
+      onChange(r.data);
+      const option = r.data.items.find(i => i.id === item.id)?.options.find(o => o.slot === slot);
+      const warning = option ? await readWithLink(option) : '';
+      await reload();
+      if (warning) onError(warning); else onNotice(`${SLOT_NAME(item, slot)} preenchida, com link de afiliado.`);
+    } catch (e) { onError(apiError(e, 'Não foi possível usar a sugestão.')); }
+    finally { setBusy(false); }
+  };
+  const dismiss = async (s: SchoolSuggestion) => {
+    try { onChange((await api.post<SchoolList>(`/school-lists/items/${item.id}/suggestions/dismiss`, {external_id: s.external_id})).data); }
+    catch (e) { onError(apiError(e, 'Não foi possível descartar.')); }
+  };
+  const groups = search ? Object.entries(search.slots).filter(([, rows]) => rows.length).sort(([a], [b]) => Number(a) - Number(b)) : [];
+  const reasons = search ? Object.entries(search.reasons).map(([k, v]) => `${k} (${v})`).join(', ') : '';
+  const waiting = search && (search.status === 'queued' || search.status === 'running');
+  return <Box mt={1.5} sx={{borderTop: `1px dashed ${tokens.line}`, pt: 1.5}}>
+    <Stack direction="row" justifyContent="space-between" alignItems="center" gap={1} flexWrap="wrap">
+      <Box>
+        <Typography fontWeight={700} fontSize={14}>Equivalentes no Mercado Livre</Typography>
+        <Typography fontSize={12.5} color="text.secondary">
+          {!search ? 'Mesmo produto (medida, quantidade e cor) em outras ofertas e marcas, com nota, vendas e loja conferidas.'
+            : SEARCH_STATUS[search.status] || `${search.result_count} anúncios lidos, ${search.accepted} iguais ao item${search.rejected ? `, ${search.rejected} recusados` : ''}.`}
+          {search?.error ? ` ${search.error}` : ''}
+          {search && search.status !== 'queued' && search.status !== 'running' && reasons ? ` Recusados por: ${reasons}.` : ''}
+        </Typography>
+      </Box>
+      <Button size="small" variant="outlined" disabled={busy || Boolean(waiting)} onClick={start}>{waiting ? 'Buscando…' : search ? 'Buscar de novo' : 'Buscar equivalentes'}</Button>
+    </Stack>
+    {waiting && <LinearProgress sx={{mt: 1}}/>}
+    {groups.map(([slot, rows]) => <Box key={slot} mt={1.25}>
+      <Typography fontSize={13} fontWeight={600} mb={.75}>Para a opção {SLOT_NAME(item, Number(slot))} (vazia)</Typography>
+      <Stack gap={.75}>{rows.map(s => <SuggestionRow key={s.listing_id} s={s} busy={busy} action={`Usar na ${SLOT_NAME(item, Number(slot))}`}
+        onUse={() => use(s, Number(slot))} onDismiss={() => dismiss(s)}/>)}</Stack>
+    </Box>)}
+    {search && search.cheaper.length > 0 && <Box mt={1.25}>
+      <Typography fontSize={13} fontWeight={600} mb={.75} color="success.main">Mais barato que as opções atuais</Typography>
+      <Stack gap={.75}>{search.cheaper.map(s => <SuggestionRow key={s.listing_id} s={s} busy={busy} action={`Trocar a ${SLOT_NAME(item, 0)}`}
+        onUse={() => use(s, 0)} onDismiss={() => dismiss(s)}/>)}</Stack>
+    </Box>}
   </Box>;
 }
 
@@ -208,6 +325,7 @@ function ItemCard({list, item, onChange, onError, onNotice}: {list: SchoolList; 
     <Box sx={{display: 'grid', gridTemplateColumns: {xs: '1fr', md: 'repeat(3, minmax(0, 1fr))'}, gap: 1.5}}>
       {SLOTS.map(slot => <OptionCard key={slot} list={list} item={item} slot={slot} option={bySlot.get(slot)} onChange={onChange} onError={onError} onNotice={onNotice}/>)}
     </Box>
+    <Suggestions list={list} item={item} onChange={onChange} onError={onError} onNotice={onNotice}/>
     {confirm.dialog}
   </Card>;
 }
@@ -265,6 +383,13 @@ export function SchoolListEditor() {
     catch (e) { setError(apiError(e, 'Não foi possível carregar a lista.')); }
   }, [id]);
   useEffect(() => { load(); }, [load]);
+  // Enquanto alguma busca de equivalentes está na fila, recarrega a cada 10 s para mostrar as sugestões.
+  const searching = Boolean(list?.items.some(i => i.search && (i.search.status === 'queued' || i.search.status === 'running')));
+  useEffect(() => {
+    if (!searching) return;
+    const timer = window.setInterval(() => { load(); }, 10000);
+    return () => window.clearInterval(timer);
+  }, [searching, load]);
   if (!list) return <><Feedback error={error} onRetry={load} onClose={() => setError('')}/><Loading show={!error}/></>;
 
   const items = list.items.filter(i => i.section === section);
@@ -288,6 +413,18 @@ export function SchoolListEditor() {
     setProgress(null); await load();
     setNotice(failed ? `Preços atualizados. ${failed} produto(s) não puderam ser lidos.` : 'Todos os preços foram atualizados.');
   };
+  const linkAll = async () => {
+    const options = list.items.flatMap(i => i.options).filter(needsLink);
+    const unique = [...new Map(options.map(o => [o.product_id, o])).values()];
+    setProgress({done: 0, total: unique.length});
+    let failed = 0;
+    for (const [n, option] of unique.entries()) {
+      if (await readWithLink(option).catch(() => 'erro')) failed++;
+      setProgress({done: n + 1, total: unique.length});
+    }
+    setProgress(null); await load();
+    setNotice(failed ? `Links gerados. ${failed} produto(s) ficaram sem link: confira se você está logado como afiliado no Chrome.` : 'Todos os links de afiliado foram gerados.');
+  };
   const download = async () => {
     try {
       const r = await api.get(`/school-lists/${list.id}/page.html`, {responseType: 'blob'});
@@ -309,7 +446,7 @@ export function SchoolListEditor() {
         <Button variant="contained" onClick={download}>Baixar página de orçamento</Button>
       </>}/>
     <Feedback error={error} notice={notice} onClose={() => { setError(''); setNotice(''); }}/>
-    {progress && <Box mb={2}><Typography fontSize={13} mb={.5}>Lendo preços no seu Chrome: {progress.done} de {progress.total}</Typography>
+    {progress && <Box mb={2}><Typography fontSize={13} mb={.5}>Lendo no seu Chrome: {progress.done} de {progress.total}</Typography>
       <LinearProgress variant="determinate" value={progress.total ? progress.done * 100 / progress.total : 0}/></Box>}
     <Card sx={{p: 2, mb: 2}}>
       <Stack direction={{xs: 'column', md: 'row'}} gap={2} justifyContent="space-between">
@@ -318,10 +455,14 @@ export function SchoolListEditor() {
         <Box><Typography fontWeight={700}>Conferência automática</Typography>
           <Typography fontSize={14}>A cada {list.refresh_hours} h, pela extensão · {ago(list.oldest_capture).replace('conferido', 'mais antigo')}</Typography></Box>
       </Stack>
-      {(list.missing_links > 0 || list.empty_items > 0) && <Alert severity="warning" sx={{mt: 1.5}}>
+      {(list.missing_links > 0 || list.broken_links > 0 || list.empty_items > 0 || list.unavailable > 0) && <Alert severity="warning" sx={{mt: 1.5}}
+        action={(list.missing_links > 0 || list.broken_links > 0) ? <Button color="inherit" size="small" disabled={Boolean(progress)} onClick={linkAll}>Gerar links que faltam</Button> : undefined}>
         {list.empty_items > 0 && `${list.empty_items} item(ns) ainda sem produto. `}
-        {list.missing_links > 0 && `${list.missing_links} opção(ões) sem link de afiliado: na página dos pais elas usam o link comum, sem comissão.`}
+        {list.missing_links > 0 && `${list.missing_links} opção(ões) sem link de afiliado: na página dos pais elas usam o link comum, sem comissão. `}
+        {list.broken_links > 0 && `${list.broken_links} link(s) de afiliado não abriram o produto na última conferência. `}
+        {list.unavailable > 0 && `${list.unavailable} opção(ões) indisponíveis no Mercado Livre: saem da página dos pais e o Autopost procura substitutos.`}
       </Alert>}
+      {list.suggestions > 0 && <Alert severity="info" sx={{mt: 1.5}}>{list.suggestions} item(ns) com sugestões de equivalentes ou de um produto mais barato. Confira em cada item.</Alert>}
     </Card>
     <PublishCard list={list} onChange={apply} onError={setError} onNotice={setNotice}/>
     <Tabs value={section} onChange={(_, v) => setSection(v)} sx={{mb: 2}}>

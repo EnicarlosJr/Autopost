@@ -58,7 +58,7 @@ export type CampaignSearch = {
 };
 export type SearchResult = {
   listing_id: number; external_id: string; title: string; url: string; image_url: string; price: number | null; original_price: number | null;
-  price_note: string; discount_pct: number | null; rating: number | null; sold: number | null; free_shipping: boolean; score: number; term: string;
+  price_note: string; regular_price?: number | null; discount_pct: number | null; rating: number | null; sold: number | null; free_shipping: boolean; score: number; term: string;
   ml_category_id: string | null; category_name: string; category_path: string; matched: boolean; reason: string; in_campaign: boolean;
   official_store?: boolean; fulfillment?: boolean; seller?: string;
   // Parecidos agrupados: o melhor de cada grupo (group_best) representa os outros.

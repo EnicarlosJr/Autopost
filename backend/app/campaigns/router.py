@@ -566,6 +566,7 @@ def search_results(campaign_id: int, search_id: int, matched: str = "true", db: 
         in_campaign = search_service.listing_in_campaign(l, urls)
         out.append({"listing_id": l.id, "external_id": l.external_id, "title": l.title, "url": l.url, "image_url": l.image_url,
                     "price": l.price, "original_price": l.original_price, "price_note": l.price_note, "discount_pct": l.discount_pct,
+                    "regular_price": l.regular_price,
                     "rating": l.rating, "sold": l.sold, "free_shipping": l.free_shipping, "score": l.score, "term": l.term,
                     "ml_category_id": l.ml_category_id, "category_name": cats[l.ml_category_id].name if l.ml_category_id in cats else "",
                     "category_path": cats[l.ml_category_id].path_names if l.ml_category_id in cats else "",

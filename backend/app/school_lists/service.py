@@ -99,6 +99,11 @@ def effective_price(option: dict) -> float | None:
     return regular if regular and regular > price else price
 
 
+def payment_kind(note: str) -> str:
+    text = (note or "").lower()
+    return "mp" if "mercado pago" in text else ("pix" if "pix" in text else "other")
+
+
 def condition_label(option: dict) -> str:
     """Condição do preço menor ("no Pix", "com Mercado Pago"), quando ele é diferente do preço normal."""
     if effective_price(option) == option.get("price"):
@@ -325,7 +330,8 @@ def next_search(db: Session, owner_id: int) -> tuple[SchoolItemSearch, list[dict
 def _snapshot(listing: Listing) -> dict:
     return {"listing_id": listing.id, "external_id": listing.external_id, "url": normalize_product_url(listing.url),
             "link": listing.url, "title": listing.title, "price": listing.price, "original_price": listing.original_price,
-            "price_note": listing.price_note or "", "image_url": listing.image_url, "seller": listing.seller,
+            "price_note": listing.price_note or "", "regular_price": listing.regular_price,
+            "image_url": listing.image_url, "seller": listing.seller,
             "rating": listing.rating, "sold": listing.sold, "official_store": bool(listing.official_store),
             "fulfillment": bool(listing.fulfillment), "free_shipping": bool(listing.free_shipping),
             "catalog_product_id": listing.catalog_product_id}
@@ -433,6 +439,8 @@ def page_data(detail: dict) -> dict:
         options = [{"label": o["label"], "title": o["title"], "price": effective_price(o),
                     "original_price": o["original_price"] if (o["original_price"] or 0) > (effective_price(o) or 0) else None,
                     "pay_price": o["price"] if condition_label(o) else None, "pay_note": condition_label(o),
+                    # "mp": só com saldo no Mercado Pago (a página pergunta); "pix": vale para todos que pagam no Pix.
+                    "pay_kind": payment_kind(condition_label(o)) if condition_label(o) else "",
                     "qty": o["buy_qty"], "image": o["image_source_url"], "url": buy_link_from(o)}
                    for o in item["options"] if o["price"] is not None and not o.get("unavailable")]
         # Item sem opção com preço também aparece (fora do total), para a lista não ficar incompleta.
@@ -575,6 +583,11 @@ h1{display:inline;font-size:25px;line-height:1.3;margin:0;letter-spacing:-.015em
 .qty span{min-width:24px;text-align:center;font-weight:800}
 .price{display:flex;flex-direction:column;align-items:flex-end;text-align:right;gap:2px}
 .price b{font-size:21px;line-height:1.15;letter-spacing:-.01em}.was{font-size:12px;color:var(--muted)}.was s{margin-left:6px}
+.ask{background:var(--sun2);border:1px solid #F3DC8B;border-radius:18px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.ask p{margin:0;font-size:14px}.ask .seg{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.ask .seg button{min-height:44px;border-radius:12px;border:1px solid var(--line2);background:#fff;font-weight:700;cursor:pointer}
+.ask .seg button[aria-pressed=true]{background:var(--navy);border-color:var(--navy);color:#fff}
+.alt{font-size:12px;color:var(--muted)}
 .each{font-size:12px;color:var(--muted)}.pay{font-size:12px;font-weight:700;color:var(--mint);background:var(--mint2);border-radius:6px;padding:1px 6px}.pct{background:var(--coral2);color:var(--coral);border-radius:6px;padding:1px 6px;font-weight:800}
 .acts{grid-area:acts;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
 .buy{grid-column:1/-1;display:flex;align-items:center;justify-content:center;gap:8px;min-height:48px;border-radius:12px;background:var(--navy);color:#fff;font-weight:800;text-decoration:none;box-shadow:0 3px 10px rgba(36,53,122,.22)}
@@ -629,7 +642,7 @@ button:focus-visible,a:focus-visible{outline:3px solid var(--sun);outline-offset
 <div><div class="row"><span class="label">No carrinho</span><b id="cartLabel"></b></div><div class="bar"><i id="cartBar"></i></div></div>
 <div class="split" id="split"></div>
 <button class="btn2" onclick="window.print()">Imprimir ou salvar em PDF</button>
-<p class="small">Preços conferidos em {{STAMP}}. O total usa o preço no cartão; descontos no Pix ou com Mercado Pago aparecem em verde em cada item. O preço e o estoque finais são os do Mercado Livre na hora da compra. O Mercado Livre não deixa colocar vários produtos no carrinho de uma vez: abra cada item e marque "Pus no carrinho".</p>
+<p class="small">Preços conferidos em {{STAMP}}. O total usa o preço no Pix quando há promoção no Pix, e o preço com saldo no Mercado Pago só se você disse que tem saldo. O preço e o estoque finais são os do Mercado Livre na hora da compra. O Mercado Livre não deixa colocar vários produtos no carrinho de uma vez: abra cada item e marque "Pus no carrinho".</p>
 </div></aside></div>
 </main>
 <div class="mbar"><div class="in"><div><small id="mbLabel"></small><b id="mbTotal"></b></div>
@@ -642,6 +655,24 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&am
 let S = {};
 try { S = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { S = {}; }
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
+// Saldo no Mercado Pago: algumas promoções valem só para quem paga com saldo. A resposta fica neste navegador.
+let MP = '';
+try { MP = localStorage.getItem('orcamento:mercado-pago') || ''; } catch (e) { MP = ''; }
+const hasMpPromo = D.items.some(it => it.options.some(o => o.pay_kind === 'mp'));
+// Preço que esta pessoa paga: Pix vale para todos; saldo no Mercado Pago só se ela disse que tem.
+const unit = o => (o.pay_kind === 'pix' || (o.pay_kind === 'mp' && MP === 'yes')) && o.pay_price ? o.pay_price : o.price;
+function payLine(o, qty) {
+  if (!o.pay_price) return '';
+  if (o.pay_kind === 'pix') return `<span class="pay">no Pix</span><span class="alt">${brl(o.price * qty)} no cartão</span>`;
+  if (o.pay_kind === 'mp' && MP === 'yes') return `<span class="pay">com saldo no Mercado Pago</span><span class="alt">sem saldo: ${brl(o.price * qty)}</span>`;
+  if (o.pay_kind === 'mp') return `<span class="alt">com saldo no Mercado Pago: ${brl(o.pay_price * qty)}</span>`;
+  return `<span class="alt">${brl(o.pay_price * qty)} ${esc(o.pay_note)}</span>`;
+}
+function askCard() {
+  if (!hasMpPromo) return '';
+  return `<div class="ask"><p><b>Você tem saldo no Mercado Pago?</b> Algumas promoções desta lista valem só para quem paga com saldo no Mercado Pago. Sem saldo, mostramos o preço no Pix ou o normal.</p>
+    <div class="seg"><button data-mp="yes" aria-pressed="${MP === 'yes'}">Tenho saldo</button><button data-mp="no" aria-pressed="${MP === 'no'}">Não tenho</button></div></div>`;
+}
 const st = i => {
   const it = D.items[i], s = S[i] || (S[i] = {inc: true, opt: it.default, qty: (it.options[it.default] || {qty: 1}).qty, cart: false});
   if (!it.options[s.opt]) s.opt = 0;
@@ -660,7 +691,7 @@ function sum(section) {
     if (!it.options.length) return;
     r.priced++;
     const s = st(i);
-    if (s.inc) { r.total += it.options[s.opt].price * s.qty; r.n++; if (s.cart) r.c++; }
+    if (s.inc) { r.total += unit(it.options[s.opt]) * s.qty; r.n++; if (s.cart) r.c++; }
   });
   return r;
 }
@@ -672,13 +703,14 @@ function card(it, i) {
   const img = o.image ? `<img class="img" src="${esc(o.image)}" alt="" referrerpolicy="no-referrer" loading="lazy">` : `<span class="img ph">${PH}</span>`;
   const info = head(`<p class="prod">${esc(o.title)}</p>`);
   if (!s.inc) return `<article class="card off">${img}${info}<div class="undo"><span>Você já tem este item.</span><button class="link" data-i="${i}" data-act="have">Desfazer</button></div></article>`;
-  const pct = o.original_price && o.original_price > o.price ? Math.round((1 - o.price / o.original_price) * 100) : 0;
+  const price = unit(o);
+  const pct = o.original_price && o.original_price > price ? Math.round((1 - price / o.original_price) * 100) : 0;
   const opts = it.options.length > 1 ? `<div class="opts" role="group" aria-label="Opções">${it.options.map((x, j) =>
-    `<button class="opt" aria-pressed="${j === s.opt}" data-i="${i}" data-opt="${j}"><span>${esc(x.label || 'Opção ' + (j + 1))}</span><b>${brl(x.price)}</b></button>`).join('')}</div>` : '';
-  const each = s.qty > 1 ? brl(o.price) + ' cada' : '';
+    `<button class="opt" aria-pressed="${j === s.opt}" data-i="${i}" data-opt="${j}"><span>${esc(x.label || 'Opção ' + (j + 1))}</span><b>${brl(unit(x))}</b></button>`).join('')}</div>` : '';
+  const each = s.qty > 1 ? brl(price) + ' cada' : '';
   return `<article class="card${s.cart ? ' done' : ''}">${img}${info}${opts}
     <div class="foot"><div class="qty"><button data-i="${i}" data-act="minus" aria-label="Diminuir quantidade">−</button><span>${s.qty}</span><button data-i="${i}" data-act="plus" aria-label="Aumentar quantidade">+</button></div>
-    <div class="price">${pct >= 5 ? `<span class="was"><span class="pct">-${pct}%</span><s>${brl(o.original_price * s.qty)}</s></span>` : ''}<b>${brl(o.price * s.qty)}</b>${o.pay_price ? `<span class="pay">${brl(o.pay_price * s.qty)} ${esc(o.pay_note)}</span>` : ''}${each ? `<span class="each">${each}</span>` : ''}</div></div>
+    <div class="price">${pct >= 5 ? `<span class="was"><span class="pct">-${pct}%</span><s>${brl(o.original_price * s.qty)}</s></span>` : ''}<b>${brl(price * s.qty)}</b>${payLine(o, s.qty)}${each ? `<span class="each">${each}</span>` : ''}</div></div>
     <div class="acts"><a class="buy" href="${esc(o.url)}" target="_blank" rel="noopener sponsored">Comprar no Mercado Livre</a>
     <button class="tog" data-i="${i}" data-act="cart" aria-pressed="${s.cart}">${s.cart ? '✓ No carrinho' : 'Pus no carrinho'}</button>
     <button class="link" data-i="${i}" data-act="have">Já tenho</button></div></article>`;
@@ -687,7 +719,8 @@ function render() {
   const sums = Object.fromEntries(sections.map(s => [s, sum(s)]));
   document.getElementById('tabs').innerHTML = sections.length < 2 ? '' : sections.map(s =>
     `<button class="tab" role="tab" aria-selected="${s === tab}" data-tab="${s}"><span>${esc(nameOf(s))}</span><small><em>${esc((LABEL[s] || ['', ''])[1])} · </em>${brl(sums[s].total)}</small></button>`).join('');
-  document.getElementById('list').innerHTML = D.items.map((it, i) => it.section === tab ? card(it, i) : '').join('')
+  const cards = D.items.map((it, i) => it.section === tab ? card(it, i) : '').join('');
+  document.getElementById('list').innerHTML = cards ? askCard() + cards : ''
     || '<div class="empty"><b>A lista ainda está sendo preparada.</b><span class="label">Os preços estão sendo conferidos. Volte daqui a pouco.</span></div>';
   const t = sums[tab] || {total: 0, n: 0, c: 0, priced: 0, all: 0};
   const label = ['Seu orçamento', nameOf(tab)].filter(Boolean).join(' · ');
@@ -707,8 +740,9 @@ function render() {
     + `<div class="row all"><span>Total da série</span><span>${brl(all)}</span></div>`;
 }
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-tab],[data-opt],[data-act]');
+  const t = e.target.closest('[data-tab],[data-opt],[data-act],[data-mp]');
   if (!t) return;
+  if (t.dataset.mp) { MP = t.dataset.mp; try { localStorage.setItem('orcamento:mercado-pago', MP); } catch (e) {} render(); return; }
   if (t.dataset.tab) { tab = t.dataset.tab; render(); window.scrollTo({top: document.getElementById('tabs').offsetTop - 4}); return; }
   const i = Number(t.dataset.i), s = st(i), act = t.dataset.act;
   if (t.dataset.opt) { s.opt = Number(t.dataset.opt); s.qty = D.items[i].options[s.opt].qty; }

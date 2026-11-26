@@ -8,7 +8,7 @@ import {api, apiError} from '../services/api';
 import {captureInBrowser, captureWithAffiliateLink, runSchoolSearch} from '../services/sender';
 import type {SchoolItem, SchoolList, SchoolListSummary, SchoolOption, SchoolSearch, SchoolSection, SchoolSuggestion} from '../types/school';
 import {Empty, Feedback, Loading} from '../components/Feedback';
-import {Meta, PageHeader, PriceTag} from '../components/Ui';
+import {Meta, PageHeader, PaymentNote, PriceTag} from '../components/Ui';
 import {useConfirm} from '../components/Bulk';
 import {DeleteIcon} from '../components/Icons';
 import {tokens} from '../theme';
@@ -176,8 +176,8 @@ function OptionCard({list, item, slot, option, onChange, onError, onNotice}: {li
         <PriceTag price={option.price} original={option.original_price} note={option.price_note} size="sm"/>
       </Box>
     </Stack>
-    {option.regular_price != null && option.price != null && option.regular_price > option.price &&
-      <Typography fontSize={12.5} color="text.secondary">Na página dos pais: <b>{brl(option.regular_price)}</b> no cartão · {brl(option.price)} {option.price_note || 'com desconto'}</Typography>}
+    <PaymentNote note={option.price_note} regular={option.regular_price}/>
+    {/mercado pago/i.test(option.price_note) && <Typography fontSize={12} color="text.secondary">Na página dos pais, cada um diz se tem saldo e vê o preço certo.</Typography>}
     {option.price_conditions && <Typography fontSize={12} color="text.secondary">Condições vistas no ML: {option.price_conditions}</Typography>}
     <Meta items={[option.store, ago(option.captured_at), option.price != null && option.buy_qty > 1 && `${option.buy_qty} × = ${brl((option.regular_price && option.regular_price > option.price ? option.regular_price : option.price) * option.buy_qty)}`]}/>
     <Stack direction="row" gap={.75} flexWrap="wrap">
@@ -228,7 +228,8 @@ function SuggestionRow({s, action, busy, onUse, onDismiss}: {s: SchoolSuggestion
       </Box>
     </Stack>
     <Stack direction="row" gap={1} alignItems="center" justifyContent="flex-end">
-      <Box textAlign="right"><PriceTag price={s.price} original={s.original_price} note={s.price_note} size="sm"/></Box>
+      <Box textAlign="right" maxWidth={240}><PriceTag price={s.price} original={s.original_price} note={s.price_note} size="sm"/>
+        <PaymentNote note={s.price_note} regular={s.regular_price}/></Box>
       <Button size="small" variant="contained" disabled={busy} onClick={onUse}>{action}</Button>
       <Button size="small" component="a" href={s.link} target="_blank" rel="noopener">Ver</Button>
       <Button size="small" color="inherit" disabled={busy} onClick={onDismiss}>Descartar</Button>
@@ -331,16 +332,89 @@ function ItemCard({list, item, onChange, onError, onNotice}: {list: SchoolList; 
 }
 
 
+/** Dados gravados da lista (PUT exige todos os campos): mistura os atuais com o que mudou. */
+function listBody(list: SchoolList, change: Partial<{school: string; grade: string; year: number; public: boolean; contact: string; turmas: string[]}> = {}) {
+  return {school: list.school, grade: list.grade, year: list.year, notes: list.notes, refresh_hours: list.refresh_hours,
+    public: list.public, contact: list.contact, turmas: list.turmas, ...change};
+}
+
+/** Turmas da série: uma etiqueta por turma, com excluir e renomear (clique no nome). */
+function TurmasEditor({value, onSave, disabled}: {value: string[]; onSave: (turmas: string[]) => Promise<void>; disabled: boolean}) {
+  const [adding, setAdding] = useState(''), [editing, setEditing] = useState<number | null>(null), [draft, setDraft] = useState('');
+  const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+  const add = async () => {
+    const name = adding.trim();
+    if (!name || value.some(t => same(t, name))) { setAdding(''); return; }
+    await onSave([...value, name]); setAdding('');
+  };
+  const rename = async (index: number) => {
+    const name = draft.trim();
+    setEditing(null);
+    if (!name || same(name, value[index])) return;
+    await onSave(value.some((t, i) => i !== index && same(t, name)) ? value.filter((_, i) => i !== index)
+      : value.map((t, i) => i === index ? name : t));
+  };
+  return <Box sx={{flex: 1}}>
+    <Typography fontSize={13} fontWeight={600} mb={.75}>Turmas desta série</Typography>
+    <Stack direction="row" gap={.75} flexWrap="wrap" alignItems="center">
+      {value.map((t, i) => editing === i
+        ? <TextField key={i} size="small" autoFocus value={draft} onChange={e => setDraft(e.target.value)} sx={{width: 140}}
+            onBlur={() => rename(i)} onKeyDown={e => { if (e.key === 'Enter') rename(i); if (e.key === 'Escape') setEditing(null); }}
+            inputProps={{'aria-label': `Novo nome da turma ${t}`, maxLength: 60}}/>
+        : <Chip key={i} label={t} disabled={disabled} onClick={() => { setEditing(i); setDraft(t); }}
+            onDelete={() => onSave(value.filter((_, j) => j !== i))} deleteIcon={<DeleteIcon aria-label={`Excluir turma ${t}`}/>}/>)}
+      {!value.length && <Typography fontSize={13} color="text.secondary">Nenhuma: os pais escolhem só a série.</Typography>}
+      <TextField size="small" placeholder="Nova turma (ex.: B)" value={adding} onChange={e => setAdding(e.target.value)} sx={{width: 170}}
+        onKeyDown={e => { if (e.key === 'Enter') add(); }} inputProps={{maxLength: 60, 'aria-label': 'Nova turma'}}/>
+      <Button size="small" disabled={disabled || !adding.trim()} onClick={add}>Adicionar</Button>
+    </Stack>
+    <Typography fontSize={12} color="text.secondary" mt={.5}>Clique no nome para renomear; o ícone exclui. Quem já se identificou continua na lista de responsáveis.</Typography>
+  </Box>;
+}
+
+function EditListDialog({list, open, onClose, onChange, onError, onDelete}: {list: SchoolList; open: boolean; onClose: () => void;
+  onChange: (l: SchoolList) => void; onError: (m: string) => void; onDelete: () => void}) {
+  const [school, setSchool] = useState(list.school), [grade, setGrade] = useState(list.grade), [year, setYear] = useState(list.year), [busy, setBusy] = useState(false);
+  useEffect(() => { if (open) { setSchool(list.school); setGrade(list.grade); setYear(list.year); } }, [open, list.school, list.grade, list.year]);
+  const save = async () => {
+    setBusy(true);
+    try { onChange((await api.put<SchoolList>(`/school-lists/${list.id}`, listBody(list, {school: school.trim(), grade: grade.trim(), year}))).data); onClose(); }
+    catch (e) { onError(apiError(e, 'Não foi possível salvar a lista.')); }
+    finally { setBusy(false); }
+  };
+  return <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+    <DialogTitle>Editar lista</DialogTitle>
+    <DialogContent>
+      <Stack gap={2} pt={1}>
+        <TextField label="Escola" value={school} onChange={e => setSchool(e.target.value)}/>
+        <TextField label="Série" required value={grade} onChange={e => setGrade(e.target.value)}/>
+        <TextField label="Ano" type="number" value={year} onChange={e => setYear(Number(e.target.value) || year)} inputProps={{min: 2020, max: 2100}}/>
+        {list.public && <Alert severity="info">Mudar a escola ou a série muda o link da página dos pais.</Alert>}
+      </Stack>
+    </DialogContent>
+    <DialogActions sx={{justifyContent: 'space-between'}}>
+      <Button color="error" onClick={onDelete}>Excluir lista</Button>
+      <Box><Button onClick={onClose}>Cancelar</Button>
+        <Button variant="contained" disabled={busy || !grade.trim()} onClick={save}>Salvar</Button></Box>
+    </DialogActions>
+  </Dialog>;
+}
+
 function PublishCard({list, onChange, onError, onNotice}: {list: SchoolList; onChange: (l: SchoolList) => void; onError: (m: string) => void; onNotice: (m: string) => void}) {
-  const [turmas, setTurmas] = useState(list.turmas.join(', ')), [contact, setContact] = useState(list.contact), [busy, setBusy] = useState(false);
-  useEffect(() => { setTurmas(list.turmas.join(', ')); setContact(list.contact); }, [list.id, list.turmas.join('|'), list.contact]);
+  const [contact, setContact] = useState(list.contact), [busy, setBusy] = useState(false);
+  useEffect(() => { setContact(list.contact); }, [list.id, list.contact]);
   const save = async (publicValue: boolean) => {
     setBusy(true);
     try {
-      const r = await api.put<SchoolList>(`/school-lists/${list.id}`, {school: list.school, grade: list.grade, year: list.year, notes: list.notes,
-        refresh_hours: list.refresh_hours, public: publicValue, contact: contact.trim(), turmas: turmas.split(/[,;\n]/).map(t => t.trim()).filter(Boolean)});
+      const r = await api.put<SchoolList>(`/school-lists/${list.id}`, listBody(list, {public: publicValue, contact: contact.trim()}));
       onChange(r.data); onNotice(publicValue ? 'Página publicada.' : 'Publicação salva.');
     } catch (e) { onError(apiError(e, 'Não foi possível salvar a publicação.')); }
+    finally { setBusy(false); }
+  };
+  const saveTurmas = async (turmas: string[]) => {
+    setBusy(true);
+    try { onChange((await api.put<SchoolList>(`/school-lists/${list.id}`, listBody(list, {turmas}))).data); onNotice('Turmas salvas.'); }
+    catch (e) { onError(apiError(e, 'Não foi possível salvar as turmas.')); }
     finally { setBusy(false); }
   };
   const copy = async () => { try { await navigator.clipboard.writeText(list.public_url); onNotice('Link copiado.'); } catch { onError('Não consegui copiar; selecione o link e copie.'); } };
@@ -354,8 +428,7 @@ function PublishCard({list, onChange, onError, onNotice}: {list: SchoolList; onC
       </Stack>
     </Stack>
     <Stack direction={{xs: 'column', md: 'row'}} gap={1.5} mt={1.5}>
-      <TextField size="small" label="Turmas desta série" value={turmas} onChange={e => setTurmas(e.target.value)} sx={{flex: 1}}
-        helperText="Separe por vírgula. Ex.: A, B, C. Vazio = só o nome da série."/>
+      <TurmasEditor value={list.turmas} onSave={saveTurmas} disabled={busy}/>
       <TextField size="small" label="Contato para os pais (dados e dúvidas)" value={contact} onChange={e => setContact(e.target.value)} sx={{flex: 1}}
         helperText="Aparece no aviso de autorização. Ex.: e-mail ou WhatsApp."/>
       <Box><Button variant="outlined" disabled={busy} onClick={() => save(list.public)}>Salvar</Button></Box>
@@ -377,6 +450,7 @@ export function SchoolListEditor() {
   const [list, setList] = useState<SchoolList | null>(null), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [section, setSection] = useState<SchoolSection>('coletivo'), [paste, setPaste] = useState(''), [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<{done: number; total: number} | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
   const apply = (l: SchoolList) => setList(l);
   const load = useCallback(async () => {
     try { apply((await api.get<SchoolList>(`/school-lists/${id}`)).data); setError(''); }
@@ -442,6 +516,7 @@ export function SchoolListEditor() {
   return <>
     <PageHeader title={`${list.grade} · ${list.year}`} description={<>{list.school || 'Escola não informada'} · <Link to="/school-lists">todas as listas</Link></>}
       actions={<>
+        <Button onClick={() => setEditOpen(true)}>Editar lista</Button>
         <Button variant="outlined" disabled={Boolean(progress)} onClick={refreshAll}>Atualizar todos os preços</Button>
         <Button variant="contained" onClick={download}>Baixar página de orçamento</Button>
       </>}/>
@@ -480,6 +555,8 @@ export function SchoolListEditor() {
       {items.map(item => <ItemCard key={item.id} list={list} item={item} onChange={apply} onError={setError} onNotice={setNotice}/>)}
     </Stack>
     <Box mt={4}><Button color="error" onClick={removeList}>Excluir esta lista</Button></Box>
+    <EditListDialog list={list} open={editOpen} onClose={() => setEditOpen(false)} onChange={apply} onError={setError}
+      onDelete={() => { setEditOpen(false); removeList(); }}/>
     {confirm.dialog}
   </>;
 }

@@ -138,3 +138,14 @@ def test_unpublished_school_is_not_found(env):
     client, _ = env
     client.post("/api/school-lists", json={"school": "Escola X", "grade": "1º Ano"})
     assert type(client)(client.app).get("/escolas/escola-x").status_code == 404
+
+
+def test_page_keeps_items_without_price():
+    # Lista recém-criada (nenhum preço lido ainda): os itens aparecem, fora do total, e a página não quebra.
+    detail = {"school": "Colégio", "grade": "1º ano", "year": 2027, "items": [
+        {"section": "individual", "name": "Lápis", "requested": "6", "color": "", "options": []}]}
+    data = service.page_data(detail)
+    assert data["items"] == [{"section": "individual", "name": "Lápis", "requested": "6", "color": "",
+                              "options": [], "default": 0}]
+    page = service.render_page(detail)
+    assert "Ainda sem preço conferido" in page and "(LABEL[tab] || tab || '')" in page

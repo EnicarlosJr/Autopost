@@ -197,9 +197,9 @@ def page_data(detail: dict) -> dict:
         options = [{"label": o["label"], "title": o["title"], "price": o["price"], "original_price": o["original_price"],
                     "qty": o["buy_qty"], "image": o["image_source_url"], "url": buy_link_from(o)}
                    for o in item["options"] if o["price"] is not None]
-        if options:
-            items.append({"section": item["section"], "name": item["name"], "requested": item["requested"],
-                          "color": item["color"], "options": options, "default": min(1, len(options) - 1)})
+        # Item sem opção com preço também aparece (fora do total), para a lista não ficar incompleta.
+        items.append({"section": item["section"], "name": item["name"], "requested": item["requested"],
+                      "color": item["color"], "options": options, "default": max(0, min(1, len(options) - 1))})
     return {"school": detail["school"], "grade": detail["grade"], "year": detail["year"], "items": items}
 
 
@@ -331,7 +331,7 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&am
 let S = {};
 try { S = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { S = {}; }
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
-const st = i => S[i] || (S[i] = {inc: true, opt: D.items[i].default, qty: D.items[i].options[D.items[i].default].qty, cart: false});
+const st = i => S[i] || (S[i] = {inc: true, opt: D.items[i].default, qty: (D.items[i].options[D.items[i].default] || {qty: 1}).qty, cart: false});
 const sections = [...new Set(D.items.map(i => i.section))];
 let tab = sections.includes('coletivo') ? 'coletivo' : sections[0];
 const LABEL = {coletivo: 'Coletivo (vai para a escola)', individual: 'Individual (fica com a criança)'};
@@ -340,6 +340,8 @@ function render() {
   let total = 0, n = 0, c = 0, shown = 0;
   document.getElementById('list').innerHTML = D.items.map((it, i) => {
     if (it.section !== tab) return '';
+    if (!it.options.length) return `<article class="card"><div class="row"><div class="main"><span class="img"></span>
+      <span><span class="name">${esc(it.name)}</span>${it.requested ? `<div class="muted">Pedido pela escola: ${esc(it.requested)}</div>` : ''}${it.color ? `<div class="muted">Cor: ${esc(it.color)}</div>` : ''}<div class="prod muted">Ainda sem preço conferido; fica fora do total.</div></span></div></div></article>`;
     shown++;
     const s = st(i), o = it.options[s.opt] || it.options[0], sub = o.price * s.qty;
     if (s.inc) { total += sub; n++; if (s.cart) c++; }
@@ -352,8 +354,8 @@ function render() {
       <div class="sub"><b>${brl(sub)}</b><div class="muted">${brl(o.price)} cada</div></div></div></div>
       <div class="opts">${opts}<span class="grow"></span><label class="chk"><input type="checkbox" data-i="${i}" data-act="cart" ${s.cart ? 'checked' : ''}> Já pus no carrinho</label>
       <a class="buy" href="${esc(o.url)}" target="_blank" rel="noopener sponsored">Abrir no Mercado Livre</a></div></article>`;
-  }).join('');
-  document.getElementById('sumTitle').textContent = 'Seu orçamento · ' + D.grade + ' · ' + (LABEL[tab] || tab).split(' (')[0];
+  }).join('') || '<article class="card"><span class="name">A lista ainda está sendo preparada.</span><span class="muted">Os preços estão sendo conferidos. Volte daqui a pouco.</span></article>';
+  document.getElementById('sumTitle').textContent = ['Seu orçamento', D.grade, (LABEL[tab] || tab || '').split(' (')[0]].filter(Boolean).join(' · ');
   document.getElementById('total').textContent = brl(total);
   document.getElementById('count').textContent = n + ' de ' + shown + ' itens incluídos';
   document.getElementById('cartLabel').textContent = c + ' de ' + n;

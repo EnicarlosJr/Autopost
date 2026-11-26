@@ -1,9 +1,10 @@
 // Service worker da extensão: recebe pedidos do painel e do botão, e roda a fila automática.
 import {captureProduct, capture, __test_generateAffiliateLink} from './capture.js';
-import {getConfig, setConfig, MIN_INTERVAL_SECONDS} from './config.js';
+import {getConfig, isAllowedPanel, setConfig, MIN_INTERVAL_SECONDS} from './config.js';
 import {prepareUpcoming, processQueueOnce, sendPublication} from './publisher.js';
-import {isSearching, runDueCampaignSearch, runDueSearch} from './searcher.js';
+import {isSearching, runDueCampaignSearch, runDueSchoolSearch, runDueSearch} from './searcher.js';
 import {syncCategories} from './catalog.js';
+import {isRefreshingLists, refreshNextListProduct} from './schoollists.js';
 import {isSending, nextSendIn, sendToWhatsApp, whatsappTab, __test_sendInWhatsApp} from './whatsapp.js';
 import {api, apiBase64} from './api.js';
 
@@ -25,9 +26,15 @@ chrome.alarms.onAlarm.addListener(async alarm => {
   const prepared = await prepareUpcoming();
   if (prepared?.prepared || prepared?.skipped === 'busy') return;
   // Buscas só rodam quando não há envio em andamento. As da campanha têm prioridade.
-  if (!isSending() && !isSearching()) {
+  if (!isSending() && !isSearching() && !isRefreshingLists()) {
     const campaign = await runDueCampaignSearch();
-    if (campaign?.skipped === 'none') runDueSearch();
+    if (campaign?.skipped !== 'none') return;
+    // Equivalentes das listas escolares: você está esperando as sugestões na tela.
+    const school = await runDueSchoolSearch();
+    if (school && !school.skipped) return;
+    const search = await runDueSearch();
+    // Sem busca na hora: reconfere o preço de um produto das listas escolares.
+    if (!search || search.skipped) refreshNextListProduct();
   }
 });
 ensureAlarm();
@@ -61,6 +68,12 @@ async function handle(message, sender) {
       return campaign?.skipped === 'none' ? runDueSearch() : campaign;
     }
     case 'syncCategories': return syncCategories();
+    case 'refreshListProduct': return refreshNextListProduct({force: true});
+    case 'runSchoolSearch': {
+      // Pedido pelo painel ("Buscar equivalentes"): roda agora se não há outra busca em andamento.
+      if (isSearching()) return {skipped: 'running'};
+      return runDueSchoolSearch();
+    }
     case 'testSend': {
       // Ensaio sem enviar: abre o grupo, cola o texto (ou a foto com legenda), confere e apaga.
       const {publication_id: id, group} = message.payload || {};
@@ -94,9 +107,11 @@ async function handle(message, sender) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
-  const allowed = sender.id === chrome.runtime.id && (sender.url || '').match(/^http:\/\/(localhost|127\.0\.0\.1):5173\//);
-  if (!allowed) { reply({ok: false, error: 'Origem não autorizada.'}); return false; }
-  handle(message, sender).then(
+  if (sender.id !== chrome.runtime.id) { reply({ok: false, error: 'Origem não autorizada.'}); return false; }
+  isAllowedPanel(sender.url).then(allowed => {
+    if (!allowed) throw new Error('Origem não autorizada. Libere o endereço do painel nas Opções da extensão.');
+    return handle(message, sender);
+  }).then(
     result => reply({ok: true, result}),
     error => { console.info('[Autopost] erro em', message.type, error); reply({ok: false, error: error.message || String(error)}); },
   );

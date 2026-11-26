@@ -1,0 +1,43 @@
+# Proxy de produção: HTTPS automático (Let's Encrypt) para os dois endereços do Autopost.
+# PANEL_DOMAIN: painel + API (só você usa). PUBLIC_DOMAIN: só as páginas dos pais e as fotos.
+{
+	email {$ACME_EMAIL}
+}
+
+(seguranca) {
+	encode gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}
+
+{$PANEL_DOMAIN} {
+	import seguranca
+	@api path /api/* /media/* /escolas /escolas/*
+	handle @api {
+		# O IP de quem conecta (o proxy sobrescreve o que o navegador mandar): base do limite de tentativas.
+		reverse_proxy api:8000 {
+			header_up X-Forwarded-For {remote_host}
+		}
+	}
+	handle {
+		reverse_proxy frontend:80
+	}
+}
+
+{$PUBLIC_DOMAIN} {
+	import seguranca
+	@public path /escolas /escolas/* /media/products/*
+	handle @public {
+		reverse_proxy api:8000 {
+			header_up X-Forwarded-For {remote_host}
+		}
+	}
+	# Painel, API e documentação nunca ficam abertos neste endereço.
+	handle {
+		respond "Página não encontrada" 404
+	}
+}

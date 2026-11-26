@@ -72,7 +72,7 @@ export async function capture({url, affiliate = false}) {
       try {
         data = await readTab(tab.id);
         log('leitura', attempt + 1, data);
-        if (data?.blocked || (data && data.price != null)) break;
+        if (data?.blocked || data?.available === false || (data && data.price != null)) break;
       } catch (error) {
         lastError = error.message || String(error);
         log('falha ao ler a página', lastError);

@@ -3,8 +3,8 @@ import {Alert, Box, Button, Card, Checkbox, Chip, CircularProgress, Collapse, Fo
   TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography} from '@mui/material';
 import {api, apiError} from '../services/api';
 import {runSearches} from '../services/sender';
-import {GENDER_LABEL} from '../types/campaign';
-import type {BestPick, CampaignSearch, Gender, OfficialCategory, SearchFilters, SearchResult} from '../types/campaign';
+import {GENDER_LABEL, OFFER_KINDS} from '../types/campaign';
+import type {BestPick, CampaignSearch, Gender, OfferKind, OfficialCategory, SearchFilters, SearchResult} from '../types/campaign';
 import type {Niche} from '../types/catalog';
 import CategoryTree, {OfficialChip} from './CategoryTree';
 import {MultiPick, SelectAll, useConfirm} from './Bulk';
@@ -25,7 +25,8 @@ const TRUST: Record<Exclude<Trust, 'custom'>, [string, string, Partial<SearchFil
     {min_sold: 500, min_rating: 4.5, official_or_full: true, exclude_suspicious: true}],
 };
 const EMPTY_FILTERS: SearchFilters = {min_price: null, max_price: null, min_discount: 0, min_rating: 4, free_shipping: false, allow_uncategorized: false,
-  gender: 'any', gender_strict: false, trust: 'basic', min_sold: 50, official_or_full: false, exclude_suspicious: true};
+  gender: 'any', gender_strict: false, trust: 'basic', min_sold: 50, official_or_full: false, exclude_suspicious: true, source: 'search', offers_pages: 2,
+  offer_kinds: ['lightning', 'deal_of_the_day'], offers_rotate: true, offers_by_category: true, skip_used_days: 7};
 const num = (v: string) => v.trim() === '' ? null : Number(v.replace(',', '.'));
 const when = (iso: string) => new Date(iso).toLocaleString('pt-BR', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
 
@@ -175,11 +176,58 @@ export default function CampaignSearchPanel({campaignId, defaults, niches = [], 
   const distinct = new Set(results.filter(r => r.matched).map(groupOf)).size;
   const toggleGroup = (key: number) => setOpen(o => o.includes(key) ? o.filter(x => x !== key) : [...o, key]);
   const active = history.find(s => s.id === current);
+  const offers = form.filters.source === 'offers';
+  const kinds: OfferKind[] = form.filters.offer_kinds?.length ? form.filters.offer_kinds : ['deal_of_the_day'];
+  const toggleKind = (k: OfferKind) => {
+    const next = kinds.includes(k) ? kinds.filter(x => x !== k) : [...kinds.filter(x => k === 'all' ? false : x !== 'all'), k];
+    set({filters: {...form.filters, offer_kinds: next.length ? next : [k]}});
+  };
 
   return <Stack gap={2.5}>
     {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
     {notice && <Alert severity="success" onClose={() => setNotice('')}>{notice}</Alert>}
     <Card variant="outlined" sx={{p: 2}}>
+      <Box mb={2.5} pb={2} sx={{borderBottom: `1px solid ${tokens.line}`}}>
+        <Typography fontWeight={650} mb={.75}>Onde buscar</Typography>
+        <ToggleButtonGroup exclusive size="small" value={offers ? 'offers' : 'search'} aria-label="Onde buscar"
+          onChange={(_, v: 'search' | 'offers' | null) => v && set({filters: {...form.filters, source: v}})}
+          sx={{'& .MuiToggleButton-root': {textTransform: 'none', px: 2}}}>
+          <ToggleButton value="offers">Área de ofertas do Mercado Livre</ToggleButton>
+          <ToggleButton value="search">Busca por palavras</ToggleButton>
+        </ToggleButtonGroup>
+        <Typography variant="body2" color="text.secondary" mt={.75}>
+          {offers ? 'Lê as seções de ofertas do ML (produtos já com desconto, que mudam todo dia). Com categorias, a própria página de ofertas já vem filtrada por elas.'
+            : 'Uma busca no Mercado Livre para cada palavra-chave (ou para o nome de cada categoria).'}
+        </Typography>
+        {offers && <Stack gap={1.25} mt={1.25}>
+          <Box>
+            <Typography fontSize={14} mb={.5}>Seções:</Typography>
+            <Stack direction="row" gap={.75} flexWrap="wrap">
+              {OFFER_KINDS.map(([k, label, hint]) => { const on = kinds.includes(k);
+                return <Tooltip key={k} title={hint}><Chip clickable label={`${on ? '✓ ' : ''}${label}`} color={on ? 'primary' : 'default'}
+                  variant={on ? 'filled' : 'outlined'} onClick={() => toggleKind(k)}/></Tooltip>; })}
+            </Stack>
+          </Box>
+          <Stack direction="row" alignItems="center" gap={1} flexWrap="wrap">
+            <Typography fontSize={14}>Páginas por seção:</Typography>
+            <ToggleButtonGroup exclusive size="small" value={form.filters.offers_pages ?? 2} aria-label="Páginas de ofertas"
+              onChange={(_, v: number | null) => v && set({filters: {...form.filters, offers_pages: v}})}>
+              {[1, 2, 3, 4, 5].map(n => <ToggleButton key={n} value={n} sx={{px: 1.5}}>{n}</ToggleButton>)}
+            </ToggleButtonGroup>
+            <Typography variant="caption" color="text.secondary">cerca de 50 ofertas por página. Cada busca lê até 12 páginas: com muitas seções e categorias, lê menos páginas de cada.</Typography>
+          </Stack>
+          <FormControlLabel control={<Switch checked={form.filters.offers_rotate !== false}
+            onChange={e => set({filters: {...form.filters, offers_rotate: e.target.checked}})}/>}
+            label={<Typography fontSize={14}>Variar as páginas a cada busca (a 1ª busca lê as páginas 1 e 2, a próxima a 3 e 4…), para não trazer sempre os mesmos produtos</Typography>}/>
+        </Stack>}
+        <Stack direction="row" alignItems="center" gap={1} mt={1.25} flexWrap="wrap">
+          <Typography fontSize={14}>Pular produtos já anunciados nos últimos</Typography>
+          <TextField size="small" type="number" value={form.filters.skip_used_days ?? 0} sx={{width: 80}} inputProps={{min: 0, max: 90}}
+            onChange={e => set({filters: {...form.filters, skip_used_days: Math.max(0, Math.min(90, Math.round(Number(e.target.value) || 0)))}})}/>
+          <Typography fontSize={14}>dias</Typography>
+          <Typography variant="caption" color="text.secondary">(0 = não pula; conta o que está na fila e o que já foi enviado)</Typography>
+        </Stack>
+      </Box>
       {niches.length > 0 && <Box mb={2.5} pb={2} sx={{borderBottom: `1px solid ${tokens.line}`}}>
         <Stack direction={{xs: 'column', sm: 'row'}} gap={1} justifyContent="space-between" alignItems={{sm: 'center'}} mb={1}>
           <Box>
@@ -208,8 +256,9 @@ export default function CampaignSearchPanel({campaignId, defaults, niches = [], 
       </Box>}
       <Typography fontWeight={650} mb={1.5}>Nova busca{form.niche_name ? ` (nicho ${form.niche_name})` : ''}</Typography>
       <Stack gap={2}>
-        <MultiPick label="Palavras-chave (uma busca no Mercado Livre para cada)" value={form.keywords} onChange={v => set({keywords: v.slice(0, 10)})} options={[]}
-          helper="Até 10. Sem palavras, o nome de cada categoria vira a palavra de busca."/>
+        <MultiPick label={offers ? 'Palavras que o título precisa ter (basta uma)' : 'Palavras-chave (uma busca no Mercado Livre para cada)'}
+          value={form.keywords} onChange={v => set({keywords: v.slice(0, 10)})} options={[]}
+          helper={offers ? 'Opcional. Vazio = todas as ofertas do dia que passarem nas categorias e nos filtros.' : 'Até 10. Sem palavras, o nome de cada categoria vira a palavra de busca.'}/>
         <Box>
           <Typography fontSize={14} fontWeight={600} mb={.75}>Confiabilidade</Typography>
           <ToggleButtonGroup exclusive size="small" value={form.filters.trust === 'custom' ? null : form.filters.trust} aria-label="Confiabilidade"
@@ -269,7 +318,7 @@ export default function CampaignSearchPanel({campaignId, defaults, niches = [], 
               label="Aceitar anúncios sem categoria identificada"/>
           </Stack></Collapse>
         </Box>
-        <Box><Button variant="contained" disabled={busy || (!form.keywords.length && !form.categories.length)} onClick={() => start({
+        <Box><Button variant="contained" disabled={busy || (!offers && !form.keywords.length && !form.categories.length)} onClick={() => start({
           niche_id: form.niche_id, categories: form.categories.map(c => ({id: c.id, include_children: c.include_children})), keywords: form.keywords,
           exclude_keywords: form.exclude_keywords, filters: form.filters})}>{busy ? 'Enviando…' : 'Buscar produtos'}</Button></Box>
       </Stack>

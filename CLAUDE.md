@@ -1,7 +1,8 @@
 # Autopost: contexto do projeto
 
 > Contexto de trabalho para quem mexe no código (pessoas e Claude).
-> **Pasta oficial:** `C:\Projetos\Autopost` (git, branch `main`, remoto `github.com/EnicarlosJr/Autopost`).
+> **Pasta oficial:** `C:\Projetos\Autopost` (git, remoto `github.com/EnicarlosJr/Autopost`).
+> **Branches:** `develop` = atualizações e testes no computador (local); `main` = produção (o servidor roda `sh deploy/deploy.sh`). Trabalhe na `develop` e leve para a `main` por pull request. Guia: `DEPLOY.md`.
 > A cópia em `OneDrive\Documentos\Autopost` é antiga (sem git, parada em 13/11) e não deve ser editada.
 > Manual de uso: `README.md`. Plano de mudanças: `Roteiro de regularização do Autopost.pdf` (23/11/2026, Matheus Assis), hoje só na pasta do OneDrive.
 > Atualizado em 23/11/2026, a partir do commit `21ceb07` (mais a melhoria da busca: parecidos e melhores).
@@ -47,11 +48,20 @@ backend/app/
   campaigns/              service.py (filtros, distribuição, ritmo, plano), search_service.py (busca dentro
                           da campanha: extensão busca no site, classifica com domain_discovery, servidor filtra)
   automations/router.py   configurações, forma de envio avulsa, prévia do modelo, logs
+  school_lists/           listas escolares: matching.py (puro: equivalentes do item, medida/cor/kit/variação,
+                          escolha por opção e "mais barato"), router.py (lista, itens, 3 opções por item, fila de conferência
+                          /refresh/next, busca de equivalentes /items/{id}/search e /api/school-searches/due|results,
+                          sugestões use/dismiss, página page.html, /api/school-visitors), public.py (páginas sem login
+                          /escolas/<escola>[/<série>]: identificação por nome do aluno + turma, cookie com token)
+                          e service.py (puro: catálogo, totais, render_page, render_landing, slugs)
   workers/                celery_app.py, tasks.py
 backend/migrations/versions/   0001 → 0019 (0011 catálogo, 0012–0013 busca e regras da campanha,
                                0014 público do nicho, 0015 confiabilidade, 0016–0017 forma de envio,
                                0018 produto de catálogo do anúncio, 0019 padrão do perfil: #publi, selo de desconto,
-                               campanha personalizada)
+                               campanha personalizada, 0020 listas escolares,
+                               0021 página pública e responsáveis, 0022 busca de equivalentes, preço no cartão
+                               e condições (regular_price, price_conditions), conferência do link (affiliate_ok),
+                               0023 listings.regular_price ("ou R$ X em outros meios" nas buscas e ofertas))
 backend/tests/                 pytest (README diz 74 testes); fixture HTML do ML
 extension/
   background.js   service worker: recebe pedidos do painel, roda a fila automática e as buscas
@@ -60,6 +70,8 @@ extension/
                   clicando em "Compartilhar" da barra de afiliados (com novas tentativas)
   reader.js       lê nome, imagem, preços e condição ("no Pix") da página do produto
   searcher.js / search_reader.js   buscas no site do ML (patrocinados de fora, selos loja oficial/Full)
+  schoollists.js  reconfere o preço dos produtos das listas escolares (uma leitura a cada 2 min, sem gerar link)
+                  e confere se o meli.la abre o produto; a busca de equivalentes fica em searcher.js (runDueSchoolSearch)
   catalog.js      baixa o catálogo de categorias pelo Chrome quando o servidor é bloqueado
   publisher.js    envio: reserva (claim), confere preço se velho, ensureAffiliateLink, envia, registra
   whatsapp.js     todos os seletores do WhatsApp Web ficam em sendInWhatsApp: é o único lugar a ajustar.
@@ -83,12 +95,16 @@ tests_e2e/        Playwright com páginas simuladas do ML e do WhatsApp (7 teste
 - **Confiabilidade da busca:** Básica (padrão: ≥ 50 vendidos, nota ≥ 4, sem "banhado", "réplica", "1ª linha") ou Alta (≥ 500 vendidos, nota ≥ 4,5, só loja oficial ou Full).
 - **Nota da oferta (0–100, `ranking.offer_score`):** desconto até 40 (metade se o preço ficou parado ≥ 3 dias, variação < 5%), nota ponderada pelas vendas até 20 (referência 4,3 com peso 30), vendas até 15, menor preço em 30 dias 10, loja oficial 7, Full 5, frete grátis 3.
 - **Parecidos (`ranking.same_product`):** mesmo produto de catálogo (`listings.catalog_product_id`, lido de `/p/MLB…`) ou títulos semelhantes (Jaccard ≥ 0,55, ou 80% do menor contido) na mesma categoria e com preço até 1,8x. Nunca junta medidas diferentes ("480gb" x "1tb"), modelos sem número em comum nem públicos diferentes. Representante do grupo: maior nota + bônus de até 8 para o mais barato.
+- **Área de ofertas (`filters.source = "offers"`):** `searches.service.OFFER_KINDS` mapeia as seções (`all`, `lightning` = `promotion_type=lightning`, `deal_of_the_day`, `unbeatable` = `container_id=MLB1298579-1`, `outlet` = `container_id=MLB916440-2`; conferido no site em 26/11/2026) e `offer_urls(kinds, categorias, páginas, início)` monta seção x categoria (`category=MLB…`, aceita subcategoria) x páginas, no máximo `OFFERS_MAX_URLS` = 12. Filtros da busca: `offer_kinds`, `offers_pages`, `offers_rotate` (o servidor grava `offers_start` com `next_offers_start`: muda a cada busca de ofertas do dono nas últimas 24 h), `offers_by_category`, `offers_match_keywords` (falso na busca por nicho com categorias) e `skip_used_days` (`recently_used`: produto na fila ou enviado no período vira "já anunciado"; vale para qualquer fonte). Busca automática aceita as linhas `ofertas do dia`, `ofertas relâmpago`, `preços imbatíveis`, `outlet` ou um link do ML (`pages_for`; outro site nunca é aberto). `search_reader.js` lê os cartões também de JSON comum (`__PRELOADED_STATE__`) e do formato antigo `promotion-item`.
+- **Grupos:** `POST /group-schedules/{nome}/rename` leva publicações (inclusive enviadas), buscas, conjuntos e campanhas em aberto para o nome novo; `DELETE` com publicações ativas responde 409 e só remove com `cancel_pending=true` (cancela). A lista de grupos não usa mais o histórico de enviadas, só cadastro, buscas e publicações ativas.
+- **Preço condicionado ao pagamento:** `price` é o preço em destaque e `price_note` a condição ("no Pix", "com saldo no Mercado Pago"); `regular_price` é o de "outros meios"/cartão. `search_reader.js` (`paymentNote`, `regularFrom`) e `reader.js` leem os dois. Cupons de afiliado: a Central (`/afiliados/hub`) gera códigos com prefixo do afiliado; ainda não integrado (falta o HTML da seção de cupons).
 - **Busca por nicho (`POST /campaigns/{id}/searches/by-niches`):** uma busca por nicho, com categorias, palavras, exclusões e público do nicho; os filtros enviados valem para todas, menos o público. Mais de 10 palavras vira mais de uma busca (`MAX_TERMS`).
 - **Melhores N (`ranking.pick_best`, `POST /campaigns/{id}/searches/{sid}/best`):** um por grupo, sem grupos já na campanha; limita por categoria (~40% de N quando há várias) e por loja (2), com penalidade para títulos parecidos com os já escolhidos; se os limites travarem, completa sem eles.
 - **Estilo da publicação (`Publication.style()`):** forma de envio = da publicação, senão da campanha, senão do perfil. Modelo da mensagem e marca d'água = da campanha se `campaigns.custom_style`, senão do perfil (`publications.service.template_for`). #publi e selo de desconto (`show_discount`) = sempre do perfil. Ao mudar o preço, cada publicação é comparada com o texto padrão do seu próprio modelo (`products.service._standard_texts`).
 - **Perfil = `automation_rules` (linha única).** Editado em Meu perfil > Mensagem e foto (`StyleSettings.tsx`, `TemplateEditor.tsx`); Configurações ficou só com a automação dos produtos e o histórico.
 - **Foto (`social_image.compose`):** desenhada em 2x e reduzida (bordas suaves); selo #publi no canto superior esquerdo, selo de desconto (≥ 5%) no superior direito, faixa no rodapé com grupo à esquerda e Instagram à direita (fonte encolhe para caber); com selo, o topo ganha respiro. Cache em disco com chave `v2|…`.
 - **Forma de envio** (`send_mode`): `preview` (só texto; o WhatsApp monta o cartão do link) ou foto + texto (imagem 1080x1080 com legenda e marca d'água opcional). Definida por campanha, pelas Configurações para ofertas avulsas, e por publicação (`send_mode_choice`) na Fila.
+- **Listas escolares:** preço da página dos pais = `regular_price` (cartão) quando o destaque depende de Pix/Mercado Pago; `price` continua sendo o preço em destaque (usado nas mensagens). `availability = "indisponível"` tira a opção da página dos pais sem apagar nada. Equivalentes só sugerem (regra 9).
 - **Produto:** `pending` → `processed` | `needs_review` | `awaiting_browser` (ML: a extensão completa os dados).
 - **Publicação, ativos:** `pending`, `awaiting_approval`, `approved` (Prontas), `scheduled`, `sending`, `paused`. **Finais:** `sent`, `failed`, `cancelled`.
 - **Busca da campanha:** `queued` → buscando → concluída / sem resultados / falhou (com lease de 10 min, até 10 termos).
@@ -131,7 +147,7 @@ Princípio: o sistema continua fazendo o trabalho pesado, mas **deixa de agir so
 | sem. 2 | **3. Telegram + liberação no WhatsApp** | destino "Telegram" (token do bot + ID do canal) nas campanhas; `whatsapp.js` em modo "liberação": cola mensagem/foto e **para no botão enviar**; painel "Prontas para enviar" para liberar em lote. Migração: Telegram recebe tudo, WhatsApp recebe uma seleção | 4–6 dias |
 | sem. 3 | **2. Links do ML em lote** | status "Aguardando link" e tela "Gerar links do dia" com contador ("12 de 20"); `capture.js` deixa de clicar no gerador (só lê o link após o clique do usuário); `publisher.js` deixa de chamar `ensureAffiliateLink` no envio. Busca: avaliar API oficial do ML ou ler só durante a tela de links. `meli.la` sem encurtador nem parâmetro extra | 3–4 dias |
 | sem. 4+ | **4. Conectores de loja** | tabela `stores` e campo `store` em produtos, ofertas e campanhas; interface por loja `search()`, `make_link()`, `rules()`; Shopee (Open API GraphQL, `sub_id` por campanha), Amazon (API de associados após as primeiras vendas), Magalu (lote, como o ML); credenciais só no `.env` do servidor, nunca na extensão | 1 sem. + 2–3 dias/loja |
-| sem. 4+ | **5. Monitoramento** | painel por canal e loja (envios, cliques por `sub_id`/UTM, entradas); alertas de restrição, sessão caída e saídas em massa; lembrete semanal de comissões anuladas; registro de cada envio (data, canal, link, preço); **não guardar telefones de membros** (LGPD); número reserva como admin | 2–3 dias |
+| sem. 4+ | **5. Monitoramento** | painel por canal e loja (envios, cliques por `sub_id`/UTM, entradas); alertas de restrição, sessão caída e saídas em massa; lembrete semanal de comissões anuladas; registro de cada envio (data, canal, link, preço); **não guardar telefones de membros** (LGPD; a página das listas escolares guarda só nome do aluno + turma, com autorização); número reserva como admin | 2–3 dias |
 
 O que já existe e ajuda no roteiro:
 - **Foto + texto** e **marca d'água** já estão prontos (0016/0017, `social_image.py`), então o modo "liberação" pode colar a foto também.
@@ -148,7 +164,7 @@ Cuidados: o roteiro se baseia em resumos de terceiros dos Termos do ML, então o
 ## Convenções
 
 - Textos de interface, erros e comentários em PT-BR, frases curtas e diretas.
-- Toda mudança de schema vem com migração Alembic numerada (próxima: `0020_…`), idempotente (checa colunas com `inspect`, como as atuais).
+- Toda mudança de schema vem com migração Alembic numerada (próxima: `0024_…`), idempotente (checa colunas com `inspect`, como as atuais).
 - Listas da API aceitam `limit`/`offset` e devolvem `X-Total-Count`.
 - Seletores do WhatsApp só em `whatsapp.js > sendInWhatsApp`; leitura de página só em `reader.js`/`search_reader.js`.
 - Ao mudar regra de negócio: atualizar o teste correspondente e o README.
@@ -158,4 +174,5 @@ Cuidados: o roteiro se baseia em resumos de terceiros dos Termos do ML, então o
 - A loja do produto (`marketplace`) vem do link (`products/sources.marketplace_of`); o formulário não pede.
 - Exclusões: publicações só canceladas ou com falha (enviadas contam para a repostagem); buscas da campanha em andamento não são apagadas.
 - Verificar o painel sem `node_modules`: `tsc` com stubs de `@mui/material`, `react-router-dom`, `axios` e `react` pega erros de sintaxe e de tipos do próprio projeto.
-- Commits pequenos e descritivos (em inglês, como os atuais), na `main`.
+- Commits pequenos e descritivos (em inglês, como os atuais), na `develop`; a `main` só recebe o que já foi testado.
+- **Produção** (`docker-compose.prod.yml` + `.env.production`, fora do git): Caddy com HTTPS em dois domínios (`PANEL_DOMAIN` = painel + `/api`; `PUBLIC_DOMAIN` = só `/escolas` e `/media/products`), sem portas de db/redis/api, `APP_ENV=production` (a API recusa segredo fraco ou de exemplo, `main.check_production_secrets`), `/docs` desligado, backup diário em `./backups` (14 dias). A extensão só aceita comandos de `localhost:5173` ou do painel liberado nas Opções (`remotePanel`, ponte registrada com `chrome.scripting.registerContentScripts`).

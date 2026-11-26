@@ -5,6 +5,7 @@ import {Alert, Autocomplete, Box, Button, Card, Checkbox, Chip, Collapse, FormCo
 import {api, apiError} from '../services/api';
 import type {Niche} from '../types/catalog';
 import CampaignSearchPanel from '../components/CampaignSearchPanel';
+import ProductPickerDialog from '../components/ProductPickerDialog';
 import CategoryTree, {OfficialChip} from '../components/CategoryTree';
 import {PriceTag} from '../components/Ui';
 import type {Campaign, CampaignConfig, CampaignOptions, CampaignPlan, CampaignProductRow, GroupSet, GroupTarget, OfficialCategory} from '../types/campaign';
@@ -70,6 +71,7 @@ export default function CampaignEditor() {
   const [notice, setNotice] = useState<string>((location.state as {notice?: string} | null)?.notice ?? '');
   const [groupQuery, setGroupQuery] = useState(''), [newGroup, setNewGroup] = useState(''), [advanced, setAdvanced] = useState(false);
   const [campaignId, setCampaignId] = useState<number | null>(id ? Number(id) : null);
+  const [picking, setPicking] = useState(false);
   const [niches, setNiches] = useState<Niche[]>([]), [products, setProducts] = useState<CampaignProductRow[]>([]), [removing, setRemoving] = useState<number[]>([]);
   const [legacy, setLegacy] = useState(false);
   const [sets, setSets] = useState<GroupSet[]>([]), [setName, setSetName] = useState('');
@@ -254,14 +256,14 @@ export default function CampaignEditor() {
       <Typography>{products.length} produto(s) nesta campanha.</Typography>
       <Stack direction="row" gap={1}>
         <Button onClick={() => goTo(2)}>Fazer outra busca</Button>
-        <Button component={Link} to="/products">Escolher em Produtos</Button>
+        <Button variant="outlined" disabled={!campaignId} onClick={() => setPicking(true)}>Escolher dos meus produtos</Button>
       </Stack>
     </Stack>
     {products.length > 0 && <Stack direction="row" gap={1} alignItems="center">
       <SelectAll total={products.length} selected={removing.length} onAll={() => setRemoving(products.map(p => p.product_id))} onNone={() => setRemoving([])}/>
       <Button color="error" disabled={!removing.length} onClick={() => removeProducts(removing)}>Remover {removing.length || ''} da campanha</Button>
     </Stack>}
-    {!products.length ? <Alert severity="info">Nenhum produto ainda. Use a etapa Busca de produtos ou selecione produtos na tela Produtos e clique em "Adicionar a uma campanha".</Alert>
+    {!products.length ? <Alert severity="info">Nenhum produto ainda. Use a etapa Busca de produtos ou "Escolher dos meus produtos" para pegar os que você já tem cadastrados.</Alert>
       : <Card variant="outlined" sx={{maxHeight: 480, overflow: 'auto'}}>{products.map(p =>
         <Stack key={p.product_id} direction="row" gap={1.5} alignItems="center" sx={{p: 1.25, borderBottom: `1px solid ${tokens.line}`}}>
           <Checkbox checked={removing.includes(p.product_id)} onChange={() => setRemoving(r => r.includes(p.product_id) ? r.filter(x => x !== p.product_id) : [...r, p.product_id])}
@@ -485,6 +487,9 @@ export default function CampaignEditor() {
     </Stepper>
     {error && <Alert severity="error" sx={{mb: 2}} onClose={() => setError('')}>{error}</Alert>}
     {notice && <Alert severity="success" sx={{mb: 2}} onClose={() => setNotice('')}>{notice}</Alert>}
+    {picking && campaignId && <ProductPickerDialog open campaignId={campaignId} inCampaign={products.map(p => p.product_id)}
+      onClose={() => setPicking(false)}
+      onAdded={n => { setNotice(`${n} produto(s) adicionado(s) à campanha.`); loadProducts(campaignId); }}/>}
     <Box sx={{display: 'grid', gap: 3, gridTemplateColumns: {xs: '1fr', md: 'minmax(0, 1fr) 320px'}, alignItems: 'start'}}>
       <Card sx={{p: {xs: 2, md: 3}}}>
         <Typography variant="h5" component="h2" mb={2.5}>{STEPS[step]}</Typography>

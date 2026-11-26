@@ -46,6 +46,8 @@ class Listing(Base):
     price: Mapped[float | None] = mapped_column(Numeric(12, 2, asdecimal=False), nullable=True)
     original_price: Mapped[float | None] = mapped_column(Numeric(12, 2, asdecimal=False), nullable=True)
     price_note: Mapped[str] = mapped_column(String(60), default="")
+    # Preço para quem não usa Pix nem saldo do Mercado Pago, quando o destaque depende do pagamento.
+    regular_price: Mapped[float | None] = mapped_column(Numeric(12, 2, asdecimal=False), nullable=True)
     discount_pct: Mapped[int | None] = mapped_column(Integer, nullable=True)
     rating: Mapped[float | None] = mapped_column(Float, nullable=True)
     sold: Mapped[int | None] = mapped_column(Integer, nullable=True)

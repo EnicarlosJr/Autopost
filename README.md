@@ -2,6 +2,9 @@
 
 Cadastre um produto, gere a oferta no seu modelo de mensagem e envie aos grupos pelo WhatsApp Web que você já usa. Tudo roda no seu computador.
 
+
+> **Online (servidor):** veja o [DEPLOY.md](DEPLOY.md). Branches: `develop` para atualizações e testes no seu computador, `main` para produção (o que o servidor roda).
+
 ## Peças do sistema
 
 | Peça | O que faz | Onde roda |
@@ -56,6 +59,8 @@ Automatizar o WhatsApp Web não é um uso previsto pelo WhatsApp e pode levar a 
 
 Em **Buscas**, crie buscas salvas para o seu nicho: termos (um por linha), palavras proibidas no título, faixa de preço, desconto mínimo, nota mínima, frete grátis, frequência e grupo de destino.
 
+Um termo também pode ser **`ofertas do dia`** (botão "+ Ofertas do dia do ML"): a extensão lê 3 páginas das [Ofertas do dia do Mercado Livre](https://www.mercadolivre.com.br/ofertas?container_id=MLB1599405-1) em vez de uma busca. Também vale colar um link do Mercado Livre por linha (página de ofertas ou de resultados); links de outros sites nunca são abertos.
+
 1. **A extensão busca pelo seu Chrome.** A cada 30 s ela pergunta ao Autopost se alguma busca está na hora, abre a página de resultados numa aba em segundo plano, lê os anúncios (os patrocinados ficam de fora) e devolve. Termos da mesma busca são lidos com pausas de alguns segundos. Se o Mercado Livre pedir verificação, a busca para e o aviso aparece em Buscas.
 2. **Achados.** Cada anúncio recebe uma nota de 0 a 100: desconto (vale metade se o preço ficou parado por dias, sinal de "de/por" inflado), nota ponderada pelas vendas (um 5,0 com poucas vendas vale menos que um 4,8 com milhares), vendas, menor preço dos últimos 30 dias, loja oficial, Full e frete grátis. Os que passam nos filtros aparecem em **Achados**, da melhor nota para a pior. Os demais ficam na aba "Fora dos filtros", com o motivo.
 3. **Aprovar.** Escolha um horário ou deixe o sistema distribuir nos próximos horários livres do grupo. **Aceitar todos** aprova a lista inteira de uma vez. Descartados não voltam a aparecer.
@@ -72,6 +77,19 @@ O histórico de preço de cada anúncio fica guardado. Use o fuso de `APP_TIMEZO
 - **Nichos:** conjuntos reutilizáveis com categorias oficiais (com ou sem subcategorias), tags pessoais e palavras-chave incluídas e excluídas. Criar, editar, duplicar, excluir e favoritar. Cada nicho e cada favorita pertencem ao usuário logado; outro usuário não os vê.
 - **Separação:** categoria oficial (ID do Mercado Livre), tag pessoal e nicho são coisas diferentes. Uma tag nunca é tratada como categoria.
 
+## Área de ofertas do Mercado Livre como fonte
+
+Na busca da campanha (e na busca por nichos), **Onde buscar: Área de ofertas do Mercado Livre** lê as seções de ofertas do ML em vez de buscar palavras:
+**Ofertas relâmpago**, **Oferta do dia**, **Preços imbatíveis**, **Outlet** ou **Todas as ofertas** (marque uma ou mais). Com categorias (as do nicho ou as escolhidas),
+a própria página de ofertas já vem filtrada por elas (até 6 categorias); numa busca por nicho com categorias, as palavras do nicho não precisam aparecer no título.
+Cada busca lê até 12 páginas (cerca de 50 ofertas cada).
+
+Para não trazer sempre os mesmos produtos:
+- **Variar as páginas a cada busca** (ligado por padrão): a primeira busca do dia lê as páginas 1 e 2, a próxima a 3 e 4, e assim por diante até a 20.
+- **Pular produtos já anunciados nos últimos N dias** (padrão 7; vale também para a busca por palavras): anúncio de produto que está na fila ou foi enviado nesse período fica de fora, com o motivo "já anunciado".
+
+Na busca automática (tela Buscas), as linhas `ofertas relâmpago`, `ofertas do dia`, `preços imbatíveis` e `outlet` leem 3 páginas da seção.
+
 ## Campanhas
 
 Em **Campanhas > Nova campanha**, um assistente em sete etapas monta a divulgação. Nada é enviado antes da confirmação na revisão.
@@ -83,6 +101,8 @@ Em **Campanhas > Nova campanha**, um assistente em sete etapas monta a divulgaç
    **Parecidos agrupados.** O mesmo produto vendido por lojas diferentes, em outra cor ou com título quase igual vira um grupo: aparece só o melhor (maior nota, com preferência pelo mais barato), com "+N parecidos" para abrir o grupo e o selo "Menor preço entre os parecidos". O agrupamento usa o produto de catálogo do Mercado Livre quando a página informa e, além disso, as palavras do título, a categoria e o preço. Medidas diferentes ("480 GB" x "1 TB"), modelos diferentes e públicos diferentes (masculino x feminino) nunca se juntam. Anúncios parecidos com algo que já está na campanha recebem o aviso "Parecido com um já na campanha". O interruptor "Agrupar parecidos" mostra a lista completa.
 
    **Escolher os melhores.** Informe quantos e clique em "Escolher os melhores": o sistema marca um por grupo de parecidos, pula o que já está na campanha (ou é parecido com algo dela) e varia categoria (cerca de 40% no máximo por categoria quando há várias) e loja (até 2 por loja). Se esses limites impedirem de chegar ao número pedido, ele completa sem eles. Nada é adicionado sozinho: confira e clique em "Adicionar à campanha".
+   **Onde buscar.** No topo da etapa 3: "Busca por palavras" (uma busca para cada palavra-chave) ou **"Ofertas do dia do Mercado Livre"**, que lê de 1 a 5 páginas das Ofertas do dia (cerca de 50 ofertas por página). Nas ofertas, as palavras-chave não são buscadas: o título precisa citar pelo menos uma delas (vazio = qualquer oferta); categorias, público, confiabilidade, preço e desconto filtram como sempre. Vale para a busca manual e para "Buscar pelos nichos" (uma busca por nicho, com todas as palavras dele).
+
    **Buscar pelos nichos.** Na etapa 3 aparecem todos os nichos do perfil; marque os que quiser (ou "Marcar todos") e clique em "Buscar nos N nichos marcados": é criada uma busca para cada nicho, cada uma com as palavras, categorias, exclusões e o público do próprio nicho (um nicho masculino busca "masculino"; um de ferramentas, não). Os filtros de preço, desconto e confiabilidade da tela valem para todas. Nicho com mais de 10 palavras vira mais de uma busca. A busca manual também pode ser preenchida com um nicho só. Cada nicho leva cerca de 1,5 min; o histórico se atualiza sozinho e mostra quantas faltam. Excluir buscas concluídas pede confirmação e avisa quantos resultados serão apagados.
    **Montar a campanha com os melhores.** Com buscas concluídas, informe quantos por busca e clique em "Adicionar até N": a campanha recebe os melhores de cada busca (mesma regra de "Escolher os melhores"), sem repetir produto entre as buscas.
 
@@ -102,7 +122,7 @@ Em **Campanhas > Nova campanha**, um assistente em sete etapas monta a divulgaç
    Configurações impossíveis são recusadas, e a prévia avisa quando nem todos os anúncios cabem até a data de término.
 7. **Revisão:** nichos, categorias oficiais, produtos na campanha e usados, anúncios por grupo, início e término previstos. Se a campanha programar num dia mais anúncios para um grupo do que o limite diário do cadastro dele (em **Grupos**), aparece um aviso com o botão "Respeitar o limite do grupo", que preenche "Limite por grupo por dia".
    Na etapa 5, um grupo desligado em **Grupos** aparece com o botão "Ativar e usar". Na etapa 6, "Espalhar" calcula o intervalo para distribuir os anúncios na janela do dia (com variação de cerca de 20%).
-   Na tela **Produtos**, "Ordenar: Maior desconto" e "Selecionar os N de maior desconto" (só prontos, com os filtros atuais) ajudam a escolher; "Adicionar a uma campanha" deixa criar uma campanha nova ou juntar a um rascunho ou campanha pausada.
+   Na etapa 4, **Escolher dos meus produtos** abre os produtos prontos ali mesmo (busca, categoria, tag, ordem e "Marcar os N de maior desconto") e adiciona à campanha sem trocar de tela. Na tela **Produtos**, "Ordenar: Maior desconto" e "Selecionar os N de maior desconto" (só prontos, com os filtros atuais) ajudam a escolher; "Adicionar a uma campanha" deixa criar uma campanha nova ou juntar a um rascunho ou campanha pausada.
 
 Campanhas criadas antes desta versão continuam funcionando com os filtros antigos de categoria e tags enquanto não tiverem produtos adicionados. Cada campanha pertence ao perfil que a criou.
 
@@ -111,6 +131,32 @@ Status no painel: *Rascunho*, *Aguardando execução* (agendada, nada enviado ai
 Ao confirmar, a campanha vira publicações agendadas comuns e sai pela mesma fila e extensão. Um produto nunca vai duas vezes para o mesmo grupo na mesma campanha, e a janela de repostagem de cada grupo é respeitada. **Pausar** segura o que ainda não saiu; **Retomar** replaneja a partir de agora sem repetir o que já foi enviado; **Cancelar** remove o restante da fila; **Duplicar** cria um rascunho igual. Cada campanha mostra progresso, falhas e o histórico de publicações.
 
 Os achados aprovados recebem a categoria oficial identificada pelo Mercado Livre e o termo da busca como tag.
+
+## Listas escolares (orçamento para os pais)
+
+Menu **Publicar > Listas escolares**. Cada lista é a lista de material de uma série (ex.: Maternal II 2027), dividida em **Coletivo** (vai para a escola) e **Individual**.
+
+1. **Nova lista**: escola, série e ano.
+2. **Adicionar itens**: cole a lista da escola, um item por linha. `2 Colas brancas 90 g` ou `Folhas de ofício | 500 folhas` (o que vem depois do `|` ou o número do começo vira "como a escola pede").
+3. **Escolha até 3 produtos por item** (por padrão Econômica, Equilibrada e Premium; o nome é editável). Cole o link do anúncio: o Autopost cadastra o produto e a extensão lê nome, foto e preço no seu Chrome. Em **Qtd.** vai quanto o pai precisa comprar daquele anúncio (ex.: 2 pacotes).
+   - Prefira a **página de catálogo** (`/p/MLB…`): ela é a mesma para todos os vendedores do produto e o Mercado Livre mostra nela a melhor oferta do momento. Assim o preço conferido é sempre o do **mesmo produto** em promoção, e o link continua valendo quando o vendedor mais barato muda. Anúncio avulso (sem `/p/`) aparece como "Anúncio avulso": só aquele anúncio é acompanhado.
+   - **Equivalentes no Mercado Livre**: ao salvar um produto, a extensão procura o **mesmo produto** em outras ofertas e marcas (3 páginas: o item pela relevância, o item do mais barato para o mais caro e o produto escolhido). Cada anúncio é conferido contra o item: mesma medida (folhas, g, ml, cores, cm, nº), mesma cor, unidade e não kit, mesma variação (espiral x brochura, líquida x bastão...), não acessório ("capa para caderno"), sem termos de baixa confiabilidade, nota ≥ 4 e ≥ 10 vendidos. Na dúvida, fica de fora; o painel mostra quantos foram recusados e por quê.
+   - As sugestões aparecem embaixo do item, por opção vazia: **Econômica** (a mais barata, abaixo das que você já tem), **Premium** (loja oficial, nota ≥ 4,6 ou muito vendido) e **Equilibrada** (melhor nota pelo preço). Com as 3 preenchidas, aparece **Mais barato que as opções atuais** quando houver um ao menos 3% mais barato. **Usar** preenche a opção e gera o link de afiliado; **Descartar** some com o anúncio nas próximas buscas. Nada entra sozinho. **Buscar de novo** refaz a busca.
+4. **Conferência automática**: com o Chrome aberto, a extensão relê um produto por vez (no máximo um a cada 2 min, quando não há envio nem busca) sempre que o preço tiver mais de 12 h (ajustável por lista). Só lê a página e confere se o meli.la ainda abre o produto; não gera link. **Atualizar todos os preços** faz a leitura de todos na hora.
+   - **Nada sai da lista sozinho.** Se a leitura falha, o último preço continua e a próxima tentativa espera 2 h. Se o Mercado Livre diz que acabou ou pausou, a opção fica marcada "Indisponível no ML", sai da página dos pais até voltar (o item continua) e o Autopost busca um substituto.
+   - **Pix e Mercado Pago:** o ML destaca o preço no Pix ("R$ 4.435 no Pix, ou R$ 4.580 em 10x sem juros"). O Autopost guarda os dois: a página dos pais soma o **preço no cartão** e mostra o desconto em verde ("R$ 4.435 no Pix"), para o carrinho nunca ficar mais caro que a página. Condições vistas perto do preço (Pix, Mercado Pago, cupom, Meli+) aparecem no painel. O mesmo vale para o desconto "com saldo no Mercado Pago" ("R$ 26,51 com saldo no Mercado Pago, ou R$ 33,14 em outros meios"): as buscas e as Ofertas do dia guardam os dois preços e a oferta sai com a condição ("com saldo no Mercado Pago"), nunca como preço para todos.
+5. **Link de afiliado**: ao salvar um link ou usar uma sugestão, o painel lê o produto e já gera o meli.la (um clique seu). Opções sem link ou com link que não abriu na última conferência aparecem no aviso da lista; **Gerar links que faltam** gera todos em lote. Na página dos pais, opção sem link (ou com link quebrado) usa o link comum, sem comissão, para nunca levar a uma página com erro.
+6. **Baixar página de orçamento**: um arquivo `.html` único (sem dependências) para publicar no seu site ou landing. Os pais escolhem a opção de cada item, ajustam a quantidade, marcam o que já têm ("Já tenho"), veem o total e abrem cada item no Mercado Livre (o ML não deixa encher o carrinho de uma vez; cada item tem o botão "Pus no carrinho"). A página mostra o horário da conferência mais antiga e o aviso #publi do seu perfil. Gere de novo depois de atualizar os preços.
+
+7. **Página online para os pais** (cartão "Página online para os pais" na lista): ligue **Publicada**, informe as **turmas** da série (ex.: A, B, C) e um **contato** para os pais. O link para mandar no grupo é `APP_PUBLIC_URL/escolas/<escola>` (ex.: `/escolas/colegio-cpcm`), um por escola.
+   - O responsável informa **só o nome do aluno e a turma**, marca a autorização e vai direto para a lista da série, com os preços da última conferência (a página é montada na hora, não precisa baixar nem subir arquivo).
+   - O navegador guarda um cookie (só um token, por 1 ano): quem já se identificou entra direto. "trocar aluno" volta ao formulário (irmãos em outra série).
+   - Cada identificação fica em **Listas escolares › Responsáveis**: aluno, turma, escola, número de acessos (um por meia hora), primeiro e último acesso. Dá para filtrar, exportar CSV e excluir (pedido de exclusão do responsável). Nada de telefone ou e-mail é coletado.
+   - Até 20 identificações por IP a cada 15 min (contra robôs).
+   - **Online de verdade:** as páginas são servidas pela API (porta 8000), em `/escolas/...`, sem login. Para os pais abrirem de fora, a API precisa estar acessível na internet (servidor/VPS ou um túnel, como o Cloudflare Tunnel) e o `.env` precisa de `APP_PUBLIC_URL` com o endereço público (vale também para as fotos). Exponha só o caminho `/escolas/` se puder; o painel e a `/api` continuam protegidos por login, mas não precisam ficar abertos.
+   - Dados de criança: o nome do aluno é dado pessoal de menor (LGPD, art. 14). O formulário pede a autorização do responsável e mostra o contato para exclusão; confira o texto com a escola antes de divulgar.
+
+Produto de lista escolar não vira publicação automática; para ofertá-lo no grupo, use Campanhas ou a Fila como qualquer produto.
 
 ## Forma de envio: prévia do link ou foto + texto
 
@@ -134,6 +180,8 @@ O Chrome "congela" páginas que não estão visíveis. Quando a janela do WhatsA
 Para o Chrome tratar a janela como visível mesmo coberta, abra o Chrome por um atalho com `--disable-backgrounding-occluded-windows` no fim do campo **Destino** (Propriedades do atalho). Deixe a tela sem bloquear enquanto houver campanha rodando.
 
 ## Grupos
+
+Cada grupo pode ser **renomeado** (abra o grupo, troque o nome e clique em "Renomear": publicações, inclusive o histórico, buscas automáticas, conjuntos e campanhas em aberto passam a usar o nome novo) e **removido** (lixeira no cartão ou "Remover grupo"; se ainda houver publicações para sair, o aviso diz quantas e elas são canceladas; o grupo sai dos conjuntos e das campanhas em aberto e não volta à lista pelo histórico).
 
 Em **Grupos**, cadastre os grupos pelo nome exato do WhatsApp, defina as categorias oficiais do Mercado Livre que cada um recebe (usadas na distribuição por categoria), o horário, o limite por dia e o prazo para repostar. Grupos inativos não aparecem nas campanhas.
 

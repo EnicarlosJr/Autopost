@@ -18,8 +18,29 @@ from app.publications.router import router as publications_router
 from app.searches.router import listings_router, router as searches_router, schedules_router
 from app.campaigns.router import group_sets_router, router as campaigns_router, searches_router as campaign_searches_router
 from app.catalog.router import niches_router, router as catalog_router
+from app.school_lists.public import router as school_public_router
+from app.school_lists.router import router as school_lists_router, searches_router as school_searches_router, visitors_router as school_visitors_router
 
 MEDIA_DIR = Path(os.getenv("MEDIA_DIR", "storage/products"))
+PRODUCTION = os.getenv("APP_ENV", "").strip().lower() == "production"
+_EXAMPLE_WORDS = ("replace", "troque", "change-this", "changeme", "autopost")
+
+
+def check_production_secrets() -> None:
+    """Em produção, não sobe com segredo de exemplo ou fraco (servidor aberto na internet)."""
+    if not PRODUCTION:
+        return
+    problems = []
+    secret = os.getenv("JWT_SECRET", "")
+    if len(secret) < 32 or any(w in secret.lower() for w in _EXAMPLE_WORDS):
+        problems.append("JWT_SECRET precisa ter 32+ caracteres aleatórios (openssl rand -base64 48)")
+    password = os.getenv("ADMIN_PASSWORD", "")
+    if password and (len(password) < 12 or any(w in password.lower() for w in _EXAMPLE_WORDS)):
+        problems.append("ADMIN_PASSWORD precisa ter 12+ caracteres e não pode ser a do exemplo")
+    if not os.getenv("APP_PUBLIC_URL", "").startswith("https://"):
+        problems.append("APP_PUBLIC_URL precisa começar com https://")
+    if problems:
+        raise RuntimeError("Configuração de produção insegura: " + "; ".join(problems) + ". Ajuste o .env.production.")
 
 def seed_defaults() -> None:
     """Cria a regra principal e o administrador inicial. O schema vem do Alembic."""
@@ -34,11 +55,15 @@ def seed_defaults() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    check_production_secrets()
     seed_defaults()
     yield
 
+_docs = os.getenv("DOCS_ENABLED", "true").strip().lower() not in ("0", "false", "no")
 app = FastAPI(title="Autopost Affiliate Automation", version="0.7.0",
-              description="Gestão de produtos, extração de metadados e fila de ofertas.", lifespan=lifespan)
+              description="Gestão de produtos, extração de metadados e fila de ofertas.", lifespan=lifespan,
+              docs_url="/docs" if _docs else None, redoc_url="/redoc" if _docs else None,
+              openapi_url="/openapi.json" if _docs else None)
 origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if o.strip()]
 # A extensão do Autopost (chrome-extension://<id>) também baixa as imagens dos produtos.
 app.add_middleware(CORSMiddleware, allow_origins=origins, allow_origin_regex=r"chrome-extension://[a-p]{32}",
@@ -59,6 +84,11 @@ app.include_router(campaign_searches_router, dependencies=protected)
 app.include_router(group_sets_router, dependencies=protected)
 app.include_router(catalog_router, dependencies=protected)
 app.include_router(niches_router, dependencies=protected)
+app.include_router(school_lists_router, dependencies=protected)
+app.include_router(school_visitors_router, dependencies=protected)
+app.include_router(school_searches_router, dependencies=protected)
+# Páginas públicas para os pais (sem login): /escolas/<escola> e /escolas/<escola>/<série>.
+app.include_router(school_public_router)
 
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/media/products", StaticFiles(directory=str(MEDIA_DIR)), name="product-media")

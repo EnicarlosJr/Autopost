@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import DateTime, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, DateTime, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from app.database.session import Base
 
@@ -40,8 +40,16 @@ class Product(Base):
     data_source: Mapped[str] = mapped_column(String(20), default="", server_default="")
     # Quando os preços foram lidos pela última vez (base para conferir antes do envio).
     captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Preço para qualquer pagamento (cartão), quando o preço em destaque depende de Pix ou Mercado Pago.
+    regular_price: Mapped[float | None] = mapped_column(Numeric(12, 2, asdecimal=False), nullable=True)
+    # Condições lidas junto do preço: "no Pix", "com Mercado Pago", "cupom" (separadas por " · ").
+    price_conditions: Mapped[str] = mapped_column(String(300), default="", server_default="")
     store: Mapped[str] = mapped_column(String(160), default="")
+    # "indisponível" quando a loja diz que acabou ou pausou (o último preço continua guardado).
     availability: Mapped[str] = mapped_column(String(80), default="")
+    # Última conferência do link de afiliado: abre o produto? (None = ainda não conferido).
+    affiliate_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    affiliate_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
     processing_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

@@ -35,6 +35,11 @@ class BrowserCapture(BaseModel):
     page_url: str = Field(default="", max_length=2048)
     # Link de afiliado gerado pela extensão (botão Compartilhar do Mercado Livre).
     affiliate_link: str = Field(default="", max_length=2048)
+    # Preço no cartão quando o preço em destaque depende de Pix/Mercado Pago, e as condições lidas.
+    regular_price: float | None = Field(default=None, ge=0)
+    price_conditions: str = Field(default="", max_length=300)
+    # False quando a loja diz que o produto acabou ou o anúncio está pausado.
+    available: bool = True
 
 class BrowserProductCreate(BrowserCapture):
     """Cadastro feito pela extensão a partir da página do produto aberta no navegador."""

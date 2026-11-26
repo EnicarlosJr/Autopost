@@ -18,7 +18,8 @@ from app.models.product import Product
 from app.models.search import Listing
 from app.products.urls import normalize_product_url
 from app.publications.service import record_event
-from app.searches.service import product_for, search_url, upsert_listing
+from app.models.publication import ACTIVE_STATUSES, Publication
+from app.searches.service import OFFER_KINDS, OFFERS_MAX_PAGE, OFFERS_PAGES, offer_urls, pages_for, product_for, upsert_listing
 
 LEASE_MINUTES = 10
 MAX_TERMS = 10
@@ -67,9 +68,56 @@ def genders_in(text: str) -> set[str]:
     return {g for g, vocab in GENDER_WORDS.items() if words & vocab}
 
 
+def from_offers(search: CampaignSearch) -> bool:
+    return jl(search.filters, {}).get("source") == "offers"
+
+
+def offer_kinds(search: CampaignSearch) -> list[str]:
+    """Seções da área de ofertas escolhidas; buscas antigas (sem a escolha) leem a Oferta do dia."""
+    kinds = [k for k in jl(search.filters, {}).get("offer_kinds") or [] if k in OFFER_KINDS]
+    return kinds or ["deal_of_the_day"]
+
+
+def offer_categories(search: CampaignSearch) -> list[str]:
+    """Categorias usadas no filtro da própria página de ofertas (até 6; o resto filtra depois, pela árvore)."""
+    if jl(search.filters, {}).get("offers_by_category") is False:
+        return []
+    return [c["id"] for c in jl(search.categories, []) if isinstance(c, dict) and c.get("id")][:6]
+
+
+def pages_of(search: CampaignSearch) -> list[dict]:
+    """Páginas que a extensão lê: as buscas por palavra ou as páginas da área de ofertas."""
+    if from_offers(search):
+        f = jl(search.filters, {})
+        return offer_urls(offer_kinds(search), offer_categories(search),
+                          int(f.get("offers_pages") or OFFERS_PAGES), int(f.get("offers_start") or 1))
+    return [page for term in terms_of(search) for page in pages_for(term)]
+
+
+def next_offers_start(db: Session, owner_id: int, pages: int) -> int:
+    """Página inicial que muda a cada busca de ofertas: 1, depois 1+N, 1+2N... até a 20 e volta.
+    Assim, buscas seguidas trazem ofertas diferentes em vez das mesmas da primeira página."""
+    since = now() - timedelta(hours=24)
+    done = db.scalar(select(func.count(CampaignSearch.id)).join(Campaign, Campaign.id == CampaignSearch.campaign_id)
+                     .where(Campaign.owner_id == owner_id, CampaignSearch.created_at >= since,
+                            CampaignSearch.filters.like('%"source":%"offers"%'))) or 0
+    span = max(1, OFFERS_MAX_PAGE // max(1, pages))
+    return 1 + (done % span) * max(1, pages)
+
+
 def terms_of(search: CampaignSearch) -> list[str]:
     """Palavras-chave da busca; sem palavras, usa o nome de cada categoria escolhida.
-    Com público definido, acrescenta "masculino" ou "feminino" a quem ainda não cita o público."""
+    Com público definido, acrescenta "masculino" ou "feminino" a quem ainda não cita o público.
+    Nas Ofertas do dia, as palavras não são buscadas: filtram o título (ver reject_reason)."""
+    if from_offers(search):
+        f = jl(search.filters, {})
+        pages, start = int(f.get("offers_pages") or OFFERS_PAGES), int(f.get("offers_start") or 1)
+        names = " + ".join(OFFER_KINDS[k][0] for k in offer_kinds(search))
+        where = f", {len(offer_categories(search))} categoria(s)" if offer_categories(search) else ""
+        span = f"página {start}" if pages == 1 else f"páginas {start} a {start + pages - 1}"
+        if not f.get("offer_kinds") and start == 1:
+            return [f"Ofertas do dia ({pages} página{'s' if pages > 1 else ''})"]     # buscas antigas
+        return [f"{names} ({span}{where})"]
     words = [w for w in jl(search.keywords, []) if isinstance(w, str) and w.strip()]
     if not words:
         words = [c.get("name") or c.get("id") for c in jl(search.categories, []) if isinstance(c, dict)]
@@ -92,10 +140,23 @@ def allowed_categories(db: Session, search: CampaignSearch) -> set[str]:
     return allowed
 
 
-def reject_reason(db: Session, search: CampaignSearch, listing: Listing, allowed: set[str]) -> str:
+def recently_used(db: Session, days: int) -> set[str]:
+    """Links dos produtos já anunciados (enviados ou na fila) nos últimos N dias."""
+    if days <= 0:
+        return set()
+    since = now() - timedelta(days=days)
+    rows = db.scalars(select(Product.original_url).join(Publication, Publication.product_id == Product.id)
+                      .where((Publication.status.in_(ACTIVE_STATUSES)) |
+                             ((Publication.status == "sent") & (Publication.sent_at >= since)))).all()
+    return set(rows)
+
+
+def reject_reason(db: Session, search: CampaignSearch, listing: Listing, allowed: set[str], used: set[str] | None = None) -> str:
     filters = jl(search.filters, {})
     if listing.price is None:
         return "sem preço"
+    if used and normalize_product_url(listing.url) in used:
+        return f"já anunciado nos últimos {int(filters.get('skip_used_days') or 0)} dias"
     if allowed:
         if not listing.ml_category_id:
             if not filters.get("allow_uncategorized"):
@@ -104,6 +165,13 @@ def reject_reason(db: Session, search: CampaignSearch, listing: Listing, allowed
             cat = db.get(MlCategory, listing.ml_category_id)
             return f"fora das categorias ({cat.name if cat else listing.ml_category_id})"
     title = plain(listing.title)
+    if from_offers(search) and filters.get("offers_match_keywords", True):
+        # Ofertas: as palavras da busca precisam aparecer no título (basta uma delas).
+        # Na busca por nicho com categorias, as categorias já filtram e as palavras não cortam nada.
+        wanted = [w for w in jl(search.keywords, []) if isinstance(w, str) and plain(w).strip()]
+        words = set(re.findall(r"\w+", title))
+        if wanted and not any(set(re.findall(r"\w+", plain(w))) <= words for w in wanted):
+            return "não cita as palavras-chave"
     for word in jl(search.exclude_keywords, []):
         if plain(word) and plain(word) in title:
             return f'contém "{word}"'
@@ -151,6 +219,7 @@ def next_due(db: Session, owner_id: int) -> CampaignSearch | None:
 
 def receive(db: Session, search: CampaignSearch, items: list[dict], error: str = "") -> CampaignSearch:
     allowed = allowed_categories(db, search)
+    used = recently_used(db, int(jl(search.filters, {}).get("skip_used_days") or 0))
     seen: set[int] = set()
     matched = 0
     for item in items:
@@ -161,7 +230,7 @@ def receive(db: Session, search: CampaignSearch, items: list[dict], error: str =
         if listing.id in seen:
             continue                      # o mesmo anúncio em duas palavras-chave conta uma vez
         seen.add(listing.id)
-        reason = reject_reason(db, search, listing, allowed)
+        reason = reject_reason(db, search, listing, allowed, used)
         matched += not reason
         row = db.get(CampaignSearchResult, (search.id, listing.id))
         if row is None:

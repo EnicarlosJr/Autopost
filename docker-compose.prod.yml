@@ -1,0 +1,68 @@
+# Produção (servidor/VPS). Use junto com o docker-compose.yml (ou pelo script deploy/deploy.sh):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.production up -d --build
+# Diferenças do local: nenhuma porta aberta além de 80/443 (Caddy com HTTPS), segredos obrigatórios,
+# documentação da API desligada, painel e API no mesmo domínio e backup diário do banco.
+x-db-url: &db_url postgresql+psycopg://autopost:${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no .env.production}@db:5432/autopost
+
+services:
+  db:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no .env.production}
+  api:
+    ports: !reset []
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"]
+    environment:
+      APP_ENV: production
+      DOCS_ENABLED: "false"
+      DATABASE_URL: *db_url
+      CORS_ORIGINS: https://${PANEL_DOMAIN:?Defina PANEL_DOMAIN}
+      APP_PUBLIC_URL: https://${PUBLIC_DOMAIN:?Defina PUBLIC_DOMAIN}
+  worker:
+    environment:
+      DATABASE_URL: *db_url
+      APP_PUBLIC_URL: https://${PUBLIC_DOMAIN:?Defina PUBLIC_DOMAIN}
+  scheduler:
+    environment:
+      DATABASE_URL: *db_url
+  frontend:
+    ports: !reset []
+    build:
+      args:
+        # Mesmo domínio do painel: sem CORS e sem endereço fixo no build.
+        VITE_API_URL: /api
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      PANEL_DOMAIN: ${PANEL_DOMAIN:?Defina PANEL_DOMAIN}
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?Defina PUBLIC_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?Defina ACME_EMAIL}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [api, frontend]
+  backup:
+    # Cópia do banco uma vez por dia em ./backups. Guarda os últimos 14 dias (os mais antigos são apagados).
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no .env.production}
+    volumes:
+      - ./backups:/backups
+    entrypoint: ["sh", "/backup.sh"]
+    configs:
+      - source: backup_script
+        target: /backup.sh
+    depends_on:
+      db:
+        condition: service_healthy
+
+configs:
+  backup_script:
+    file: ./deploy/backup.sh
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -44,7 +44,8 @@ function callExtension<T>(type: string, payload?: unknown, timeout = 3000): Prom
 }
 
 // Informa à extensão o endereço da API usado por este painel.
-setTimeout(() => { callExtension('config', {api: API_BASE}).catch(() => {}); }, 500);
+// Em produção a API é relativa (/api, no mesmo domínio): a extensão precisa do endereço completo.
+setTimeout(() => { callExtension('config', {api: new URL(API_BASE, window.location.origin).href.replace(/\/+$/, '')}).catch(() => {}); }, 500);
 
 export async function extensionStatus(): Promise<ExtensionStatus | null> {
   try { return await callExtension<ExtensionStatus>('ping', undefined, 1500); } catch { return null; }

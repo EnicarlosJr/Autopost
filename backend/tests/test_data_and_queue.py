@@ -43,7 +43,7 @@ def test_mercado_livre_registered_in_panel_waits_for_browser(env):
                        json={"title": "Moto", "price": 4435, "original_price": 7999.9, "price_note": "no Pix"}).json()
     assert done["status"] == "processed" and done["data_source"] == "browser"
     pubs = client.get("/api/publications").json()
-    assert len(pubs) == 1 and "❌ De R$ 7.999,90" in pubs[0]["message"]
+    assert len(pubs) == 1 and "❌ De ~R$ 7.999,90~" in pubs[0]["message"]
 
 def test_enqueue_from_extension_creates_approved_publication_for_group(env):
     client, _ = env

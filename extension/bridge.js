@@ -1,4 +1,4 @@
-// Ponte entre o painel do Autopost (localhost:5173) e a extensão.
+// Ponte entre o painel do Autopost (localhost:5173 ou o painel de produção liberado nas Opções) e a extensão.
 // Só repassa mensagens da própria página; nada de outros sites chega aqui.
 (() => {
   let VERSION = '?';

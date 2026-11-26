@@ -1,6 +1,6 @@
 // Service worker da extensão: recebe pedidos do painel e do botão, e roda a fila automática.
 import {captureProduct, capture, __test_generateAffiliateLink} from './capture.js';
-import {getConfig, setConfig, MIN_INTERVAL_SECONDS} from './config.js';
+import {getConfig, isAllowedPanel, setConfig, MIN_INTERVAL_SECONDS} from './config.js';
 import {prepareUpcoming, processQueueOnce, sendPublication} from './publisher.js';
 import {isSearching, runDueCampaignSearch, runDueSchoolSearch, runDueSearch} from './searcher.js';
 import {syncCategories} from './catalog.js';
@@ -107,9 +107,11 @@ async function handle(message, sender) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
-  const allowed = sender.id === chrome.runtime.id && (sender.url || '').match(/^http:\/\/(localhost|127\.0\.0\.1):5173\//);
-  if (!allowed) { reply({ok: false, error: 'Origem não autorizada.'}); return false; }
-  handle(message, sender).then(
+  if (sender.id !== chrome.runtime.id) { reply({ok: false, error: 'Origem não autorizada.'}); return false; }
+  isAllowedPanel(sender.url).then(allowed => {
+    if (!allowed) throw new Error('Origem não autorizada. Libere o endereço do painel nas Opções da extensão.');
+    return handle(message, sender);
+  }).then(
     result => reply({ok: true, result}),
     error => { console.info('[Autopost] erro em', message.type, error); reply({ok: false, error: error.message || String(error)}); },
   );

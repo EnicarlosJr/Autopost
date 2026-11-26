@@ -1,7 +1,8 @@
 # Autopost: contexto do projeto
 
 > Contexto de trabalho para quem mexe no código (pessoas e Claude).
-> **Pasta oficial:** `C:\Projetos\Autopost` (git, branch `main`, remoto `github.com/EnicarlosJr/Autopost`).
+> **Pasta oficial:** `C:\Projetos\Autopost` (git, remoto `github.com/EnicarlosJr/Autopost`).
+> **Branches:** `develop` = atualizações e testes no computador (local); `main` = produção (o servidor roda `sh deploy/deploy.sh`). Trabalhe na `develop` e leve para a `main` por pull request. Guia: `DEPLOY.md`.
 > A cópia em `OneDrive\Documentos\Autopost` é antiga (sem git, parada em 13/11) e não deve ser editada.
 > Manual de uso: `README.md`. Plano de mudanças: `Roteiro de regularização do Autopost.pdf` (23/11/2026, Matheus Assis), hoje só na pasta do OneDrive.
 > Atualizado em 23/11/2026, a partir do commit `21ceb07` (mais a melhoria da busca: parecidos e melhores).
@@ -172,4 +173,5 @@ Cuidados: o roteiro se baseia em resumos de terceiros dos Termos do ML, então o
 - A loja do produto (`marketplace`) vem do link (`products/sources.marketplace_of`); o formulário não pede.
 - Exclusões: publicações só canceladas ou com falha (enviadas contam para a repostagem); buscas da campanha em andamento não são apagadas.
 - Verificar o painel sem `node_modules`: `tsc` com stubs de `@mui/material`, `react-router-dom`, `axios` e `react` pega erros de sintaxe e de tipos do próprio projeto.
-- Commits pequenos e descritivos (em inglês, como os atuais), na `main`.
+- Commits pequenos e descritivos (em inglês, como os atuais), na `develop`; a `main` só recebe o que já foi testado.
+- **Produção** (`docker-compose.prod.yml` + `.env.production`, fora do git): Caddy com HTTPS em dois domínios (`PANEL_DOMAIN` = painel + `/api`; `PUBLIC_DOMAIN` = só `/escolas` e `/media/products`), sem portas de db/redis/api, `APP_ENV=production` (a API recusa segredo fraco ou de exemplo, `main.check_production_secrets`), `/docs` desligado, backup diário em `./backups` (14 dias). A extensão só aceita comandos de `localhost:5173` ou do painel liberado nas Opções (`remotePanel`, ponte registrada com `chrome.scripting.registerContentScripts`).

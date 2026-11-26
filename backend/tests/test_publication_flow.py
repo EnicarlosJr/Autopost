@@ -138,7 +138,7 @@ def test_browser_capture_fills_previous_price_and_note(env, monkeypatch):
     assert (product["price"], product["original_price"], product["price_note"]) == (4435, 7999.9, "no Pix")
     assert product["image_url"].startswith("http://localhost:8000/media/products/1.jpg")
     preview = client.get("/api/publications/preview/1").json()["message"]
-    assert "❌ De R$ 7.999,90\n💸 Por R$ 4.435,00 no Pix (44% OFF)" in preview
+    assert "❌ De ~R$ 7.999,90~\n💸 Por *R$ 4.435,00* no Pix (44% OFF)" in preview
 
 def test_browser_capture_updates_standard_text_of_pending_publications(env, monkeypatch):
     client, _ = env
@@ -149,7 +149,7 @@ def test_browser_capture_updates_standard_text_of_pending_publications(env, monk
     manual = client.post("/api/publications", json={"product_id": 1, "message": "Texto meu", "group_name": "G2"}).json()
     client.post("/api/products/1/browser-data", json={"title": "Cafeteira", "price": 80, "original_price": 100})
     rows = {p["id"]: p["message"] for p in client.get("/api/publications").json()}
-    assert "❌ De R$ 100,00" in rows[auto["id"]] and "(20% OFF)" in rows[auto["id"]]
+    assert "❌ De ~R$ 100,00~" in rows[auto["id"]] and "(20% OFF)" in rows[auto["id"]]
     assert rows[manual["id"]] == "Texto meu"
 
 def test_browser_capture_without_data_is_rejected(env):

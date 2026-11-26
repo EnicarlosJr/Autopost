@@ -2,6 +2,9 @@
 
 Cadastre um produto, gere a oferta no seu modelo de mensagem e envie aos grupos pelo WhatsApp Web que você já usa. Tudo roda no seu computador.
 
+
+> **Online (servidor):** veja o [DEPLOY.md](DEPLOY.md). Branches: `develop` para atualizações e testes no seu computador, `main` para produção (o que o servidor roda).
+
 ## Peças do sistema
 
 | Peça | O que faz | Onde roda |

@@ -9,6 +9,8 @@
     <label class="check"><input id="autoSend" type="checkbox"> Enviar a fila automaticamente, mesmo com o painel fechado</label>
     <p class="hint">Precisa do WhatsApp Web aberto em uma aba deste Chrome. A extensão confere a fila a cada 30 segundos.</p>
     <label>Intervalo entre mensagens (segundos) <input id="interval" type="number" min="20" step="5"></label>
+    <label>Painel online (produção) <input id="remotePanel" type="url" placeholder="https://painel.seudominio.com.br"></label>
+    <p class="hint">Só para o sistema no servidor. O Chrome vai pedir permissão para a extensão funcionar nesse endereço. Vazio = só o painel local (localhost:5173).</p>
     <label>Endereço da API <input id="apiBase" type="url"></label>
     <p class="hint">O painel informa este endereço sozinho ao ser aberto. Mude só se a API estiver em outro lugar.</p>
     <button id="save">Salvar</button>

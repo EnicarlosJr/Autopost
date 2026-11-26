@@ -59,7 +59,8 @@ backend/migrations/versions/   0001 → 0019 (0011 catálogo, 0012–0013 busca 
                                0018 produto de catálogo do anúncio, 0019 padrão do perfil: #publi, selo de desconto,
                                campanha personalizada, 0020 listas escolares,
                                0021 página pública e responsáveis, 0022 busca de equivalentes, preço no cartão
-                               e condições (regular_price, price_conditions), conferência do link (affiliate_ok))
+                               e condições (regular_price, price_conditions), conferência do link (affiliate_ok),
+                               0023 listings.regular_price ("ou R$ X em outros meios" nas buscas e ofertas))
 backend/tests/                 pytest (README diz 74 testes); fixture HTML do ML
 extension/
   background.js   service worker: recebe pedidos do painel, roda a fila automática e as buscas
@@ -94,6 +95,7 @@ tests_e2e/        Playwright com páginas simuladas do ML e do WhatsApp (7 teste
 - **Nota da oferta (0–100, `ranking.offer_score`):** desconto até 40 (metade se o preço ficou parado ≥ 3 dias, variação < 5%), nota ponderada pelas vendas até 20 (referência 4,3 com peso 30), vendas até 15, menor preço em 30 dias 10, loja oficial 7, Full 5, frete grátis 3.
 - **Parecidos (`ranking.same_product`):** mesmo produto de catálogo (`listings.catalog_product_id`, lido de `/p/MLB…`) ou títulos semelhantes (Jaccard ≥ 0,55, ou 80% do menor contido) na mesma categoria e com preço até 1,8x. Nunca junta medidas diferentes ("480gb" x "1tb"), modelos sem número em comum nem públicos diferentes. Representante do grupo: maior nota + bônus de até 8 para o mais barato.
 - **Ofertas do dia (`filters.source = "offers"`, `offers_pages` 1–5):** a extensão lê `searches.service.offer_pages` (container `MLB1599405-1`, `&page=N`) em vez de buscar palavras; as palavras viram filtro do título ("não cita as palavras-chave"). Busca automática aceita o termo `ofertas do dia` ou um link do ML por linha (`pages_for`; outro site nunca é aberto). `search_reader.js` lê os cartões também de JSON comum (`__PRELOADED_STATE__`) e do formato antigo `promotion-item`.
+- **Preço condicionado ao pagamento:** `price` é o preço em destaque e `price_note` a condição ("no Pix", "com saldo no Mercado Pago"); `regular_price` é o de "outros meios"/cartão. `search_reader.js` (`paymentNote`, `regularFrom`) e `reader.js` leem os dois. Cupons de afiliado: a Central (`/afiliados/hub`) gera códigos com prefixo do afiliado; ainda não integrado (falta o HTML da seção de cupons).
 - **Busca por nicho (`POST /campaigns/{id}/searches/by-niches`):** uma busca por nicho, com categorias, palavras, exclusões e público do nicho; os filtros enviados valem para todas, menos o público. Mais de 10 palavras vira mais de uma busca (`MAX_TERMS`).
 - **Melhores N (`ranking.pick_best`, `POST /campaigns/{id}/searches/{sid}/best`):** um por grupo, sem grupos já na campanha; limita por categoria (~40% de N quando há várias) e por loja (2), com penalidade para títulos parecidos com os já escolhidos; se os limites travarem, completa sem eles.
 - **Estilo da publicação (`Publication.style()`):** forma de envio = da publicação, senão da campanha, senão do perfil. Modelo da mensagem e marca d'água = da campanha se `campaigns.custom_style`, senão do perfil (`publications.service.template_for`). #publi e selo de desconto (`show_discount`) = sempre do perfil. Ao mudar o preço, cada publicação é comparada com o texto padrão do seu próprio modelo (`products.service._standard_texts`).
@@ -160,7 +162,7 @@ Cuidados: o roteiro se baseia em resumos de terceiros dos Termos do ML, então o
 ## Convenções
 
 - Textos de interface, erros e comentários em PT-BR, frases curtas e diretas.
-- Toda mudança de schema vem com migração Alembic numerada (próxima: `0023_…`), idempotente (checa colunas com `inspect`, como as atuais).
+- Toda mudança de schema vem com migração Alembic numerada (próxima: `0024_…`), idempotente (checa colunas com `inspect`, como as atuais).
 - Listas da API aceitam `limit`/`offset` e devolvem `X-Total-Count`.
 - Seletores do WhatsApp só em `whatsapp.js > sendInWhatsApp`; leitura de página só em `reader.js`/`search_reader.js`.
 - Ao mudar regra de negócio: atualizar o teste correspondente e o README.

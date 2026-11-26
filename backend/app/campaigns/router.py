@@ -365,6 +365,8 @@ class ResultItem(BaseModel):
     price: float | None = Field(default=None, ge=0)
     original_price: float | None = Field(default=None, ge=0)
     price_note: str = Field(default="", max_length=60)
+    # Preço para quem não usa Pix nem saldo do Mercado Pago ("ou R$ X em outros meios").
+    regular_price: float | None = Field(default=None, ge=0)
     rating: float | None = Field(default=None, ge=0, le=5)
     sold: int | None = Field(default=None, ge=0)
     free_shipping: bool = False

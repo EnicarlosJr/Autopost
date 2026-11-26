@@ -14,6 +14,19 @@ function readSearchPage() {
     const cents = (el.querySelector('.andes-money-amount__cents')?.textContent || '').replace(/\D/g, '');
     return whole ? Number(cents ? `${whole}.${cents.slice(0, 2).padEnd(2, '0')}` : whole) : null;
   };
+  // Preço que depende do pagamento: "no Pix" ou "com saldo no Mercado Pago" (quem paga de outro jeito paga mais).
+  const paymentNote = text => {
+    const t = String(text || '');
+    if (/mercado\s*pago/i.test(t)) return /saldo/i.test(t) ? 'com saldo no Mercado Pago' : 'com Mercado Pago';
+    return /no\s*pix/i.test(t) ? 'no Pix' : '';
+  };
+  // "ou R$ 54,99 em outros meios" / "ou R$ 5.999 em 10x ... sem juros": preço de quem não usa Pix nem saldo.
+  const regularFrom = (box, price) => {
+    const line = [...(box?.querySelectorAll('.poly-price__installments, [class*="installments"]') || [])]
+      .find(el => /outros meios|sem juros/i.test(el.textContent || ''));
+    const value = line ? money(line.querySelector('.andes-money-amount')) : null;
+    return value != null && price != null && value > price ? value : null;
+  };
   const sold = text => {
     const m = String(text || '').toLowerCase().match(/\+?\s*([\d.,]+)\s*(mil)?\s*vendid/);
     if (!m) return null;
@@ -58,7 +71,8 @@ function readSearchPage() {
       seller: (card.querySelector('.poly-component__seller')?.textContent || '').replace(/^por\s+/i, '').trim(),
       price: money(current),
       original_price: money(previous),
-      price_note: /no\s*pix/i.test(priceBox?.textContent || '') ? 'no Pix' : '',
+      price_note: paymentNote(priceBox?.textContent),
+      regular_price: regularFrom(priceBox, money(current)),
       rating,
       sold: sold(review?.textContent || card.textContent),
       free_shipping: /gr[aá]tis/i.test(shipping),
@@ -89,7 +103,7 @@ function readSearchPage() {
       seller: (card.querySelector('.promotion-item__seller')?.textContent || '').replace(/^por\s+/i, '').trim(),
       price: money(card.querySelector('.andes-money-amount:not(.andes-money-amount--previous)')),
       original_price: money(card.querySelector('.andes-money-amount--previous')),
-      price_note: /no\s*pix/i.test(card.textContent || '') ? 'no Pix' : '',
+      price_note: paymentNote(card.textContent),
       rating: null, sold: null,
       free_shipping: /gr[aá]tis/i.test(card.querySelector('.promotion-item__shipping, [class*="shipping"]')?.textContent || ''),
       catalog_product_id: catalogId.toUpperCase() || null,
@@ -144,7 +158,13 @@ function readSearchPage() {
         const title = part('title')?.title?.text || '';
         if (!title) continue;
         const price = part('price')?.price || {};
-        const previous = (price.price_labels || []).flatMap(l => l.values || []).find(v => v.price?.previous)?.price?.value ?? null;
+        const previous = (price.price_labels || []).flatMap(l => l.values || []).find(v => v.price?.previous)?.price?.value
+          ?? price.previous_price?.value ?? null;
+        // "ou {price_total} em outros meios" / "... sem juros": o preço para quem não usa Pix nem saldo do Mercado Pago.
+        const installments = price.installments || {};
+        const total = (installments.values || []).find(v => v.key === 'price_total')?.price?.value;
+        const regular = typeof total === 'number' && (/outros meios|sem juros/i.test(installments.text || '') || installments.no_interest === true)
+          ? total : null;
         const reviewText = (part('review_compacted')?.review_compacted?.values || []).map(v => v.label?.text || '').join(' ');
         const ratingText = (part('review_compacted')?.review_compacted?.values || []).map(v => v.label?.text || '').find(t => /^[0-5]([.,]\d)?$/.test(t));
         const shippingText = JSON.stringify(part('shipping') || {});
@@ -158,7 +178,8 @@ function readSearchPage() {
           seller: seller.replace(/^por\s+/i, ''),
           price: typeof price.current_price?.value === 'number' ? price.current_price.value : null,
           original_price: typeof previous === 'number' ? previous : null,
-          price_note: /no\s*pix/i.test(JSON.stringify(price)) ? 'no Pix' : '',
+          price_note: paymentNote(JSON.stringify(price)),
+          regular_price: regular != null && typeof price.current_price?.value === 'number' && regular > price.current_price.value ? regular : null,
           rating: ratingText ? Number(ratingText.replace(',', '.')) : null,
           sold: Number.isFinite(meta.signal?.sales) ? meta.signal.sales : sold(reviewText),
           free_shipping: /free_shipping|gr[aá]tis/i.test(shippingText),

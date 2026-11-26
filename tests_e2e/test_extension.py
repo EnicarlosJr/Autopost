@@ -91,7 +91,7 @@ def test_search_reader_skips_ads_and_reads_cards(browser):
     assert first.pop("catalog_product_id") == "MLB30144703"        # link com página de catálogo (/p/)
     assert first == {"external_id": "MLB4268042659", "url": "https://produto.mercadolivre.com.br/MLB-4268042659",
                      "title": "Parafusadeira 48v", "image_url": "https://http2.mlstatic.com/D_1.webp", "seller": "THE BLACK TOOLS",
-                     "price": 132.9, "original_price": 259.9, "price_note": "no Pix", "rating": 4.8, "sold": 250000,
+                     "price": 132.9, "original_price": 259.9, "price_note": "no Pix", "regular_price": None, "rating": 4.8, "sold": 250000,
                      "free_shipping": True}
     assert second["external_id"] == "MLBU3947202950" and second["url"] == "https://www.mercadolivre.com.br/lanterna-tatica/up/MLBU3947202950"
     assert second["price"] == 1097 and second["rating"] is None and second["sold"] == 1500 and not second["free_shipping"]
@@ -163,7 +163,7 @@ def test_search_reader_reads_embedded_payload_when_cards_are_not_rendered(browse
                      "image_url": "https://http2.mlstatic.com/D_NQ_NP_655892-MLB1_092026-O.webp", "seller": "CROMMO",
                      "price": 158.98, "original_price": 199.9, "price_note": "no Pix", "rating": 4.9, "sold": 777,
                      "free_shipping": True, "ml_category_id": "MLB999193", "official_store": True, "fulfillment": True,
-                     "catalog_product_id": "MLB1"}
+                     "catalog_product_id": "MLB1", "regular_price": None}
 
 
 OFFERS = "https://www.mercadolivre.com.br/ofertas?container_id=MLB1599405-1"
@@ -199,3 +199,18 @@ def test_offers_page_reads_promotion_item_cards(browser):
     assert data["items"][0] | {"image_url": ""} == {"external_id": "MLB123456789", "url": "https://produto.mercadolivre.com.br/MLB-123456789",
         "title": "Mochila Escolar", "image_url": "", "seller": "", "price": 149.9, "original_price": 200, "price_note": "",
         "rating": None, "sold": None, "free_shipping": True, "catalog_product_id": None}
+
+
+def test_reader_marks_mercado_pago_balance_price(browser):
+    # Formato real da Central de Afiliados/Ofertas: preço com saldo no Mercado Pago e "ou R$ X em outros meios".
+    card = {"polycard": {"metadata": {"id": "MLB26080271", "url": "www.mercadolivre.com.br/oleo/p/MLB26080271"},
+                         "components": [{"type": "title", "title": {"text": "Óleo Elseve 100ml"}},
+                                        {"type": "price", "price": {"previous_price": {"value": 64.19}, "current_price": {"value": 26.51},
+                                         "discount_label": {"text": "58% OFF com Saldo no Mercado Pago"},
+                                         "installments": {"text": "ou {price_total} em outros meios", "no_interest": False,
+                                                          "values": [{"key": "price_total", "type": "price", "price": {"value": 33.14}}]}}}]}}
+    state = json.dumps({"results": [card]}, ensure_ascii=False)
+    data = _read_offers(browser, f'<html><body><script>window.__PRELOADED_STATE__ = {state};</script></body></html>')
+    item = data["items"][0]
+    assert item["price"] == 26.51 and item["original_price"] == 64.19 and item["regular_price"] == 33.14
+    assert item["price_note"] == "com saldo no Mercado Pago"

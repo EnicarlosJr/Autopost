@@ -50,7 +50,7 @@ function readProductPage() {
     result.price = number(line.querySelector('meta[itemprop="price"]')?.content) ?? money(line.querySelector('.andes-money-amount:not(.andes-money-amount--previous)'));
     const lineText = text(line);
     if (/no\s*pix/i.test(lineText)) result.price_note = 'no Pix';
-    else if (/mercado\s*pago/i.test(lineText)) result.price_note = 'com Mercado Pago';
+    else if (/mercado\s*pago/i.test(lineText)) result.price_note = /saldo/i.test(lineText) ? 'com saldo no Mercado Pago' : 'com Mercado Pago';
     // "ou R$ 4.580 em 10x sem juros": o preço para quem não paga no Pix (só vale sem juros).
     const subtitles = ml.querySelector('.ui-pdp-price__subtitles');
     const subText = text(subtitles);
@@ -63,7 +63,7 @@ function readProductPage() {
     const area = `${text($('#price') || ml)} ${promos}`;
     const conditions = [];
     if (/no\s*pix/i.test(area)) conditions.push('no Pix');
-    if (/mercado\s*pago/i.test(area)) conditions.push('com Mercado Pago');
+    if (/mercado\s*pago/i.test(area)) conditions.push(/saldo/i.test(area) ? 'com saldo no Mercado Pago' : 'com Mercado Pago');
     if (/cupom/i.test(area)) conditions.push('cupom disponível');
     if (/meli\s*(\+|mais)/i.test(area)) conditions.push('Meli+');
     result.price_conditions = conditions.join(' · ');

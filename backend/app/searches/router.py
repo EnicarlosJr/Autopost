@@ -85,6 +85,7 @@ class ResultItem(BaseModel):
     price: float | None = Field(default=None, ge=0)
     original_price: float | None = Field(default=None, ge=0)
     price_note: str = Field(default="", max_length=60)
+    regular_price: float | None = Field(default=None, ge=0)     # "ou R$ X em outros meios"
     rating: float | None = Field(default=None, ge=0, le=5)
     sold: int | None = Field(default=None, ge=0)
     free_shipping: bool = False

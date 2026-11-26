@@ -56,3 +56,23 @@ def test_automatic_search_accepts_offers(env):
     due = client.get("/api/searches/due").json()
     assert [t["url"] for t in due["terms"]][-1] == "https://lista.mercadolivre.com.br/parafusadeira"
     assert len(due["terms"]) == 4 and due["terms"][0]["url"].startswith("https://www.mercadolivre.com.br/ofertas")
+
+
+def test_mercado_pago_balance_price_keeps_other_methods_price(env):
+    # Cartão da Central/Ofertas: R$ 26,51 "com saldo no Mercado Pago", "ou R$ 33,14 em outros meios".
+    client, Session = env
+    niche, camp = _setup(client)
+    cid = camp["id"]
+    s = client.post(f"/api/campaigns/{cid}/searches", json={"filters": {"source": "offers", "trust": "off", "min_sold": 0,
+                                                                        "min_rating": None, "exclude_suspicious": False}}).json()
+    client.get("/api/campaign-searches/due")
+    item = _item(9, "MLB1672", title="Óleo Elseve 100ml", price=26.51, original_price=64.19,
+                 price_note="com saldo no Mercado Pago", regular_price=33.14)
+    client.post(f"/api/campaign-searches/{s['id']}/results", json={"items": [item]})
+    r = client.get(f"/api/campaigns/{cid}/searches/{s['id']}/results").json()[0]
+    client.post(f"/api/campaigns/{cid}/products", json={"listing_ids": [r["listing_id"]], "search_id": s["id"]})
+    from app.models.product import Product
+    prods = client.get(f"/api/campaigns/{cid}/products").json()
+    assert prods[0]["price"] == 26.51 and prods[0]["price_note"] == "com saldo no Mercado Pago"
+    with Session() as db:
+        assert db.get(Product, prods[0]["product_id"]).regular_price == 33.14

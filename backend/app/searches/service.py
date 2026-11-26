@@ -200,6 +200,8 @@ def upsert_listing(db: Session, item: dict, *, search_id: int | None = None,
     original = item.get("original_price")
     listing.original_price = original if original and listing.price is not None and original > listing.price else None
     listing.price_note = (item.get("price_note") or "")[:60]
+    regular = item.get("regular_price")
+    listing.regular_price = regular if regular and listing.price is not None and regular > listing.price else None
     listing.discount_pct = discount_of(listing.price, listing.original_price)
     listing.rating = item.get("rating")
     listing.sold = item.get("sold")
@@ -308,6 +310,7 @@ def product_for(db: Session, listing: Listing) -> Product:
     product.price = listing.price
     product.original_price = listing.original_price
     product.price_note = listing.price_note
+    product.regular_price = listing.regular_price
     product.store = product.store or "Mercado Livre"
     product.marketplace = product.marketplace or "Mercado Livre"
     product.data_source = "browser"

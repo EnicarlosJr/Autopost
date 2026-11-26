@@ -42,10 +42,11 @@ function SearchDialog({draft, onClose, onSaved, onError}: {draft: Draft | null; 
       <Grid item xs={12} md={6}><TextField fullWidth multiline minRows={4} label="Termos de busca (um por linha, até 10)"
         placeholder={'lanterna tática\nparafusadeira\nkit chaves'} value={value.terms} onChange={e => set({terms: e.target.value})}
 />
-        <Stack direction="row" alignItems="center" gap={1} mt={.5}>
-          <Button size="small" disabled={/^ofertas do dia$/im.test(value.terms)}
-            onClick={() => set({terms: [value.terms.trim(), 'ofertas do dia'].filter(Boolean).join('\n')})}>+ Ofertas do dia do ML</Button>
-          <Typography variant="caption" color="text.secondary">Lê 3 páginas de ofertas. Também aceita um link do Mercado Livre por linha.</Typography>
+        <Stack direction="row" alignItems="center" gap={.5} mt={.5} flexWrap="wrap">
+          {['ofertas relâmpago', 'ofertas do dia', 'preços imbatíveis', 'outlet'].map(w =>
+            <Button key={w} size="small" disabled={new RegExp(`^${w}$`, 'im').test(value.terms)}
+              onClick={() => set({terms: [value.terms.trim(), w].filter(Boolean).join('\n')})}>+ {w}</Button>)}
+          <Typography variant="caption" color="text.secondary">Cada seção de ofertas do ML lê 3 páginas. Também aceita um link do Mercado Livre por linha.</Typography>
         </Stack></Grid>
       <Grid item xs={12} md={6}><TextField fullWidth multiline minRows={4} label="Palavras proibidas no título (uma por linha)"
         value={value.exclude_terms} onChange={e => set({exclude_terms: e.target.value})}/></Grid>

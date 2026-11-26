@@ -12,9 +12,11 @@ import {display, tokens} from '../theme';
 
 type Group = GroupSchedule & {categories: string[]; active: boolean; ml_categories?: OfficialCategory[]};
 
-function GroupEditor({group, options, onSave}: {group: Group; options: {name: string; count?: number}[]; onSave: (g: Group) => Promise<void>}) {
-  const [value, setValue] = useState(group), [busy, setBusy] = useState(false);
-  useEffect(() => setValue(group), [group]);
+function GroupEditor({group, options, onSave, onRename, onRemove}: {group: Group; options: {name: string; count?: number}[];
+  onSave: (g: Group) => Promise<void>; onRename: (newName: string) => Promise<void>; onRemove: () => void}) {
+  const [value, setValue] = useState(group), [busy, setBusy] = useState(false), [name, setName] = useState(group.group_name);
+  useEffect(() => { setValue(group); setName(group.group_name); }, [group]);
+  const renamed = name.trim() && name.trim() !== group.group_name;
   // Limites de cada número: hora de 0 a 23 (fim até 24), contagens a partir de 1, dias a partir de 0.
   const LIMITS: Partial<Record<keyof Group, [number, number]>> = {start_hour: [0, 23], end_hour: [1, 24], max_per_day: [1, 500], gap_minutes: [1, 1440], repost_days: [0, 365]};
   const num = (key: keyof Group, label: string, width = 130) => { const [min, max] = LIMITS[key] ?? [0, 9999];
@@ -22,6 +24,15 @@ function GroupEditor({group, options, onSave}: {group: Group; options: {name: st
       onChange={e => setValue({...value, [key]: Math.min(max, Math.max(min, Math.round(Number(e.target.value) || 0)))})}/>; };
   const invalid = value.end_hour <= value.start_hour;
   return <Stack gap={2}>
+    <Box>
+      <Typography fontWeight={600} mb={.5}>Nome do grupo</Typography>
+      <Stack direction={{xs: 'column', sm: 'row'}} gap={1} alignItems={{sm: 'flex-start'}}>
+        <TextField size="small" label="Nome exato do grupo no WhatsApp" value={name} onChange={e => setName(e.target.value)} sx={{flex: 1}}
+          helperText="Mudou o nome no WhatsApp? Troque aqui: publicações, buscas, conjuntos e campanhas em aberto passam a usar o nome novo."/>
+        <Button variant="outlined" disabled={busy || !renamed} onClick={async () => { setBusy(true); try { await onRename(name.trim()); } finally { setBusy(false); } }}>
+          Renomear</Button>
+      </Stack>
+    </Box>
     <Box>
       <Typography fontWeight={600} mb={.5}>Categorias oficiais que este grupo recebe</Typography>
       <Typography variant="body2" color="text.secondary" mb={1}>Usadas na distribuição "Por categoria" das campanhas, pela categoria do Mercado Livre de cada produto.</Typography>
@@ -34,7 +45,10 @@ function GroupEditor({group, options, onSave}: {group: Group; options: {name: st
       {num('gap_minutes', 'Intervalo (min)')}{num('repost_days', 'Repostar após (dias)', 160)}
     </Stack>
     {invalid && <Typography variant="body2" color="error.main">O horário final precisa ser depois do inicial.</Typography>}
-    <Box><Button variant="contained" disabled={busy || invalid} onClick={async () => { setBusy(true); try { await onSave(value); } finally { setBusy(false); } }}>Salvar grupo</Button></Box>
+    <Stack direction="row" gap={1} justifyContent="space-between" flexWrap="wrap">
+      <Button variant="contained" disabled={busy || invalid} onClick={async () => { setBusy(true); try { await onSave(value); } finally { setBusy(false); } }}>Salvar grupo</Button>
+      <Button color="error" startIcon={<DeleteIcon/>} onClick={onRemove}>Remover grupo</Button>
+    </Stack>
   </Stack>;
 }
 
@@ -79,9 +93,28 @@ export default function GroupsPage() {
   };
   const bulkRemove = async () => {
     const items = picked();
-    if (!await confirm.ask('Remover do cadastro?', `${items.length} grupo(s) saem do cadastro. Publicações e buscas que usam esses nomes não mudam.`, 'Remover')) return;
-    for (const g of items) await api.delete(`/group-schedules/${encodeURIComponent(g.group_name)}`).catch(() => {});
-    setNotice(`${items.length} grupo(s) removido(s) do cadastro.`); sel.clear(); load();
+    if (!await confirm.ask(`Remover ${items.length} grupo(s)?`, 'Publicações que ainda iam sair para eles são canceladas. Eles saem também dos conjuntos e das campanhas em aberto. O histórico de enviadas fica.', 'Remover')) return;
+    let done = 0;
+    for (const g of items) if (await removeOne(g, false)) done++;
+    if (done) setNotice(`${done} grupo(s) removido(s).`); sel.clear(); load(); loadSets();
+  };
+  /** Remove um grupo; se ainda houver publicações para sair, avisa e só cancela com a confirmação. */
+  const removeOne = async (g: Group, ask = true): Promise<boolean> => {
+    const name = g.group_name;
+    let active = 0;
+    try { active = (await api.get<{active: number}>(`/group-schedules/${encodeURIComponent(name)}/usage`)).data.active; } catch { /* segue sem a contagem */ }
+    if (ask && !await confirm.ask(`Remover o grupo "${name}"?`,
+      (active ? `${active} publicação(ões) ainda iam sair para ele e serão canceladas. ` : '')
+      + 'Ele sai também dos conjuntos e das campanhas em aberto, e as buscas automáticas deixam de agendar para ele. O histórico de enviadas fica.',
+      active ? `Cancelar ${active} e remover` : 'Remover')) return false;
+    try { await api.delete(`/group-schedules/${encodeURIComponent(name)}`, {params: {cancel_pending: active > 0}}); return true; }
+    catch (e) { setError(apiError(e, `Não foi possível remover "${name}".`)); return false; }
+  };
+  const rename = async (g: Group, newName: string) => {
+    try {
+      await api.post(`/group-schedules/${encodeURIComponent(g.group_name)}/rename`, {new_name: newName});
+      setNotice(`Grupo renomeado para "${newName}".`); setOpen(o => o.map(x => x === g.group_name ? newName : x)); sel.clear(); await load(); loadSets();
+    } catch (e) { setError(apiError(e, 'Não foi possível renomear o grupo.')); }
   };
   const add = async () => {
     const name = newName.trim(); if (!name) return;
@@ -142,13 +175,17 @@ export default function GroupsPage() {
             <Tooltip title={g.active ? 'Ativo: aparece nas campanhas' : 'Inativo: não recebe campanhas'}>
               <Switch checked={g.active} onChange={e => save({...g, active: e.target.checked}, e.target.checked ? 'Grupo ativado.' : 'Grupo desativado.')} inputProps={{'aria-label': 'Grupo ativo'}}/>
             </Tooltip>
+            <Tooltip title="Remover grupo"><IconButton aria-label={`Remover ${g.group_name}`}
+              onClick={async () => { if (await removeOne(g)) { setNotice(`Grupo "${g.group_name}" removido.`); sel.clear(); load(); loadSets(); } }}>
+              <DeleteIcon fontSize="small"/></IconButton></Tooltip>
             <IconButton aria-label={expanded ? 'Recolher' : 'Editar'} aria-expanded={expanded}
               onClick={() => setOpen(o => expanded ? o.filter(x => x !== g.group_name) : [...o, g.group_name])}
               sx={{transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform .15s'}}><ExpandIcon/></IconButton>
           </Stack>
           <Collapse in={expanded} unmountOnExit>
             <Box sx={{px: 2, pb: 2, pt: 1.5, borderTop: `1px solid ${tokens.line}`}}>
-              <GroupEditor group={g} options={options} onSave={v => save(v)}/>
+              <GroupEditor group={g} options={options} onSave={v => save(v)} onRename={n => rename(g, n)}
+                onRemove={async () => { if (await removeOne(g)) { setNotice(`Grupo "${g.group_name}" removido.`); sel.clear(); load(); loadSets(); } }}/>
             </Box>
           </Collapse>
         </Card>; })}
@@ -160,7 +197,7 @@ export default function GroupsPage() {
         onClick={() => saveSet(setName.trim(), picked().map(g => g.group_name), sets.find(s => s.name.toLocaleLowerCase() === setName.trim().toLocaleLowerCase()))}>Salvar como conjunto</Button>
       <Button size="small" variant="outlined" onClick={() => bulkActive(true)}>Ativar</Button>
       <Button size="small" variant="outlined" onClick={() => bulkActive(false)}>Desativar</Button>
-      <Button size="small" variant="outlined" startIcon={<DeleteIcon/>} onClick={bulkRemove}>Remover do cadastro</Button>
+      <Button size="small" variant="outlined" startIcon={<DeleteIcon/>} onClick={bulkRemove}>Remover</Button>
     </BulkBar>
     {confirm.dialog}
   </>;

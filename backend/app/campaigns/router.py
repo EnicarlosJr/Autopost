@@ -18,6 +18,7 @@ from app.models.search import GroupSchedule, Search
 from app.campaigns import service
 from app.campaigns.service import clean_list, jload, tags_of
 from app.searches import ranking
+from app.searches.service import OFFER_KINDS
 
 
 router = APIRouter(prefix="/api/campaigns", tags=["campaigns"])
@@ -344,9 +345,25 @@ class SearchFilters(BaseModel):
     min_sold: int = Field(default=0, ge=0, le=1000000)
     official_or_full: bool = False
     exclude_suspicious: bool = False
-    # Onde buscar: "search" (uma busca por palavra-chave) ou "offers" (Ofertas do dia do ML, as palavras filtram o título).
+    # Onde buscar: "search" (uma busca por palavra-chave) ou "offers" (área de ofertas do ML).
     source: str = Field(default="search", pattern="^(search|offers)$")
     offers_pages: int = Field(default=3, ge=1, le=5)
+    # Seções da área de ofertas: all, lightning, deal_of_the_day, unbeatable, outlet (vazio = Oferta do dia).
+    offer_kinds: list[str] = Field(default_factory=list, max_length=5)
+    offers_rotate: bool = True            # cada nova busca de ofertas começa numa página diferente
+    offers_start: int = Field(default=1, ge=1, le=20)   # preenchido pelo servidor quando offers_rotate
+    offers_by_category: bool = True       # filtra a própria página de ofertas pelas categorias da busca
+    offers_match_keywords: bool = True    # nas ofertas, o título precisa citar uma das palavras
+    # Pula anúncios de produtos já anunciados (na fila ou enviados) nos últimos N dias. 0 = não pula.
+    skip_used_days: int = Field(default=0, ge=0, le=90)
+
+    @field_validator("offer_kinds")
+    @classmethod
+    def _kinds(cls, v: list[str]) -> list[str]:
+        bad = [k for k in v if k not in OFFER_KINDS]
+        if bad:
+            raise ValueError(f"Seção de ofertas desconhecida: {', '.join(bad)}")
+        return list(dict.fromkeys(v))
 
 class SearchCreate(BaseModel):
     niche_id: int | None = None
@@ -424,6 +441,7 @@ def create_search(campaign_id: int, data: SearchCreate, db: Session = Depends(ge
     if len(known) != len(set(ids)):
         raise HTTPException(422, "Há categorias fora do catálogo oficial. Atualize as categorias em Meu perfil.")
     keywords = clean_list(data.keywords)
+    filters = _with_offers_start(db, user, data.filters)
     if not keywords and not ids and data.filters.source != "offers":
         raise HTTPException(422, "Informe pelo menos uma palavra-chave ou uma categoria.")
     s = CampaignSearch(campaign_id=c.id, niche_id=niche.id if niche else None, niche_name=niche.name if niche else "",
@@ -431,9 +449,16 @@ def create_search(campaign_id: int, data: SearchCreate, db: Session = Depends(ge
                                                "path": known[x.id].path_names} for x in data.categories], ensure_ascii=False),
                        keywords=json.dumps(keywords, ensure_ascii=False),
                        exclude_keywords=json.dumps(clean_list(data.exclude_keywords), ensure_ascii=False),
-                       filters=data.filters.model_dump_json(), status="queued")
+                       filters=filters.model_dump_json(), status="queued")
     db.add(s); db.commit(); db.refresh(s)
     return _search_read(s)
+
+
+def _with_offers_start(db: Session, user: User, f: "SearchFilters") -> "SearchFilters":
+    """Nas ofertas com "variar páginas", o servidor escolhe a página inicial (muda a cada busca)."""
+    if f.source == "offers" and f.offers_rotate:
+        return f.model_copy(update={"offers_start": search_service.next_offers_start(db, user.id, f.offers_pages)})
+    return f
 
 
 class NicheSearches(BaseModel):
@@ -449,6 +474,7 @@ def create_searches_by_niche(campaign_id: int, data: NicheSearches, db: Session 
     if c.status == "cancelled":
         raise HTTPException(409, "Campanha cancelada. Duplique a campanha para buscar de novo.")
     niches = {n.id: n for n in db.scalars(select(Niche).where(Niche.id.in_(data.niche_ids), Niche.owner_id == user.id))}
+    base = _with_offers_start(db, user, data.filters)     # todos os nichos do mesmo clique começam na mesma página
     created, skipped = [], []
     for nid in dict.fromkeys(data.niche_ids):
         n = niches.get(nid)
@@ -462,8 +488,11 @@ def create_searches_by_niche(campaign_id: int, data: NicheSearches, db: Session 
         if not keywords and not cats:
             skipped.append(n.name)
             continue
-        filters = data.filters.model_copy(update={"gender": n.gender if n.gender in ("male", "female") else "any"})
-        # Nas Ofertas do dia as palavras só filtram o título: uma busca por nicho, com todas as palavras.
+        filters = base.model_copy(update={"gender": n.gender if n.gender in ("male", "female") else "any",
+                                          # Nas ofertas, com categorias no nicho, a própria página já vem filtrada por elas:
+                                          # exigir as palavras no título cortaria quase tudo.
+                                          "offers_match_keywords": not cats})
+        # Nas ofertas as palavras só filtram o título: uma busca por nicho, com todas as palavras.
         size = (len(keywords) or 1) if filters.source == "offers" else search_service.MAX_TERMS
         for chunk in ([keywords[i:i + size] for i in range(0, len(keywords), size)] or [[]]):
             s = CampaignSearch(campaign_id=c.id, niche_id=n.id, niche_name=n.name, categories=categories,

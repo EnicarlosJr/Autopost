@@ -77,6 +77,19 @@ O histórico de preço de cada anúncio fica guardado. Use o fuso de `APP_TIMEZO
 - **Nichos:** conjuntos reutilizáveis com categorias oficiais (com ou sem subcategorias), tags pessoais e palavras-chave incluídas e excluídas. Criar, editar, duplicar, excluir e favoritar. Cada nicho e cada favorita pertencem ao usuário logado; outro usuário não os vê.
 - **Separação:** categoria oficial (ID do Mercado Livre), tag pessoal e nicho são coisas diferentes. Uma tag nunca é tratada como categoria.
 
+## Área de ofertas do Mercado Livre como fonte
+
+Na busca da campanha (e na busca por nichos), **Onde buscar: Área de ofertas do Mercado Livre** lê as seções de ofertas do ML em vez de buscar palavras:
+**Ofertas relâmpago**, **Oferta do dia**, **Preços imbatíveis**, **Outlet** ou **Todas as ofertas** (marque uma ou mais). Com categorias (as do nicho ou as escolhidas),
+a própria página de ofertas já vem filtrada por elas (até 6 categorias); numa busca por nicho com categorias, as palavras do nicho não precisam aparecer no título.
+Cada busca lê até 12 páginas (cerca de 50 ofertas cada).
+
+Para não trazer sempre os mesmos produtos:
+- **Variar as páginas a cada busca** (ligado por padrão): a primeira busca do dia lê as páginas 1 e 2, a próxima a 3 e 4, e assim por diante até a 20.
+- **Pular produtos já anunciados nos últimos N dias** (padrão 7; vale também para a busca por palavras): anúncio de produto que está na fila ou foi enviado nesse período fica de fora, com o motivo "já anunciado".
+
+Na busca automática (tela Buscas), as linhas `ofertas relâmpago`, `ofertas do dia`, `preços imbatíveis` e `outlet` leem 3 páginas da seção.
+
 ## Campanhas
 
 Em **Campanhas > Nova campanha**, um assistente em sete etapas monta a divulgação. Nada é enviado antes da confirmação na revisão.
@@ -109,7 +122,7 @@ Em **Campanhas > Nova campanha**, um assistente em sete etapas monta a divulgaç
    Configurações impossíveis são recusadas, e a prévia avisa quando nem todos os anúncios cabem até a data de término.
 7. **Revisão:** nichos, categorias oficiais, produtos na campanha e usados, anúncios por grupo, início e término previstos. Se a campanha programar num dia mais anúncios para um grupo do que o limite diário do cadastro dele (em **Grupos**), aparece um aviso com o botão "Respeitar o limite do grupo", que preenche "Limite por grupo por dia".
    Na etapa 5, um grupo desligado em **Grupos** aparece com o botão "Ativar e usar". Na etapa 6, "Espalhar" calcula o intervalo para distribuir os anúncios na janela do dia (com variação de cerca de 20%).
-   Na tela **Produtos**, "Ordenar: Maior desconto" e "Selecionar os N de maior desconto" (só prontos, com os filtros atuais) ajudam a escolher; "Adicionar a uma campanha" deixa criar uma campanha nova ou juntar a um rascunho ou campanha pausada.
+   Na etapa 4, **Escolher dos meus produtos** abre os produtos prontos ali mesmo (busca, categoria, tag, ordem e "Marcar os N de maior desconto") e adiciona à campanha sem trocar de tela. Na tela **Produtos**, "Ordenar: Maior desconto" e "Selecionar os N de maior desconto" (só prontos, com os filtros atuais) ajudam a escolher; "Adicionar a uma campanha" deixa criar uma campanha nova ou juntar a um rascunho ou campanha pausada.
 
 Campanhas criadas antes desta versão continuam funcionando com os filtros antigos de categoria e tags enquanto não tiverem produtos adicionados. Cada campanha pertence ao perfil que a criou.
 
@@ -167,6 +180,8 @@ O Chrome "congela" páginas que não estão visíveis. Quando a janela do WhatsA
 Para o Chrome tratar a janela como visível mesmo coberta, abra o Chrome por um atalho com `--disable-backgrounding-occluded-windows` no fim do campo **Destino** (Propriedades do atalho). Deixe a tela sem bloquear enquanto houver campanha rodando.
 
 ## Grupos
+
+Cada grupo pode ser **renomeado** (abra o grupo, troque o nome e clique em "Renomear": publicações, inclusive o histórico, buscas automáticas, conjuntos e campanhas em aberto passam a usar o nome novo) e **removido** (lixeira no cartão ou "Remover grupo"; se ainda houver publicações para sair, o aviso diz quantas e elas são canceladas; o grupo sai dos conjuntos e das campanhas em aberto e não volta à lista pelo histórico).
 
 Em **Grupos**, cadastre os grupos pelo nome exato do WhatsApp, defina as categorias oficiais do Mercado Livre que cada um recebe (usadas na distribuição por categoria), o horário, o limite por dia e o prazo para repostar. Grupos inativos não aparecem nas campanhas.
 

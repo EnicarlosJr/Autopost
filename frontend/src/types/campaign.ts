@@ -38,7 +38,19 @@ export const GENDER_LABEL: Record<Gender, string> = {any: 'Todos', male: 'Mascul
 export type SearchFilters = {min_price: number | null; max_price: number | null; min_discount: number; min_rating: number | null; free_shipping: boolean;
   allow_uncategorized: boolean; gender: Gender; gender_strict: boolean;
   trust: 'off' | 'basic' | 'high' | 'custom'; min_sold: number; official_or_full: boolean; exclude_suspicious: boolean;
-  source?: 'search' | 'offers'; offers_pages?: number};
+  source?: 'search' | 'offers'; offers_pages?: number;
+  /** Seções da área de ofertas do ML; vazio = Oferta do dia. */
+  offer_kinds?: OfferKind[]; offers_rotate?: boolean; offers_start?: number; offers_by_category?: boolean; offers_match_keywords?: boolean;
+  /** Pula produtos já anunciados (na fila ou enviados) nos últimos N dias; 0 = não pula. */
+  skip_used_days?: number};
+export type OfferKind = 'all' | 'lightning' | 'deal_of_the_day' | 'unbeatable' | 'outlet';
+export const OFFER_KINDS: [OfferKind, string, string][] = [
+  ['lightning', 'Ofertas relâmpago', 'Duram poucas horas; mudam ao longo do dia'],
+  ['deal_of_the_day', 'Oferta do dia', 'Valem até a meia-noite'],
+  ['unbeatable', 'Preços imbatíveis', 'Seleção do Mercado Livre com preço baixo'],
+  ['outlet', 'Outlet', 'Produtos com desconto de saldo ou coleção passada'],
+  ['all', 'Todas as ofertas', 'Tudo da área de ofertas (inclui as outras seções)'],
+];
 export type CampaignSearch = {
   id: number; campaign_id: number; niche_id: number | null; niche_name: string; categories: OfficialCategory[]; keywords: string[];
   exclude_keywords: string[]; filters: SearchFilters; terms: string[]; status: 'queued' | 'running' | 'done' | 'no_results' | 'failed';

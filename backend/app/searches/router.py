@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 from app.database.session import get_db
-from app.models.publication import Publication
+from app.models.publication import ACTIVE_STATUSES, Publication
 from app.models.search import GroupSchedule, Listing, Search
 from app.searches import service
 from app.searches.service import SEARCH_LEASE_MINUTES, as_utc, lines, now, pages_for
@@ -285,8 +285,11 @@ schedules_router = APIRouter(prefix="/api/group-schedules", tags=["searches"])
 @schedules_router.get("", response_model=list[ScheduleRead])
 def list_schedules(db: Session = Depends(get_db)):
     """Agendas salvas e os grupos usados nas buscas (com os valores padrão)."""
+    # Cadastro + grupos ainda em uso (buscas e publicações ativas). O histórico de enviadas não traz de volta
+    # um grupo removido do cadastro.
     groups = {g.strip() for g in db.scalars(select(Search.group_name)) if g and g.strip()}
-    groups |= {g.strip() for g in db.scalars(select(Publication.group_name).distinct()) if g and g.strip()}
+    groups |= {g.strip() for g in db.scalars(select(Publication.group_name).where(Publication.status.in_(ACTIVE_STATUSES)).distinct())
+               if g and g.strip()}
     groups |= set(db.scalars(select(GroupSchedule.group_name)))
     def read(g: str) -> ScheduleRead:
         s = service.group_schedule(db, g)
@@ -315,13 +318,89 @@ def save_schedule(group_name: str, data: ScheduleWrite, db: Session = Depends(ge
     db.commit()
     return ScheduleRead(group_name=group_name, **data.model_dump())
 
+def _group_usage(db: Session, name: str) -> dict:
+    active = db.scalar(select(func.count(Publication.id)).where(Publication.group_name == name,
+                                                                Publication.status.in_(ACTIVE_STATUSES))) or 0
+    sending = db.scalar(select(func.count(Publication.id)).where(Publication.group_name == name, Publication.status == "sending")) or 0
+    return {"active": active, "sending": sending}
+
+
+def _rewrite_group_lists(db: Session, old: str, new: str | None) -> None:
+    """Troca (ou tira, com new=None) o grupo nos conjuntos de grupos e nas campanhas que ainda não terminaram."""
+    from app.models.campaign import Campaign, GroupSet
+    for gs in db.scalars(select(GroupSet)):
+        names = json.loads(gs.groups or "[]")
+        if old in names:
+            names = [new if g == old else g for g in names if new is not None or g != old]
+            gs.groups = json.dumps(list(dict.fromkeys(names)), ensure_ascii=False)
+    for c in db.scalars(select(Campaign).where(Campaign.status.not_in(("completed", "cancelled")))):
+        targets = json.loads(c.groups or "[]")
+        if any(isinstance(t, dict) and t.get("group") == old for t in targets):
+            targets = [({**t, "group": new} if t.get("group") == old else t) for t in targets
+                       if isinstance(t, dict) and (new is not None or t.get("group") != old)]
+            c.groups = json.dumps(targets, ensure_ascii=False)
+
+
+@schedules_router.get("/{group_name}/usage")
+def group_usage(group_name: str, db: Session = Depends(get_db)):
+    """Quantas publicações ainda vão sair para o grupo (para avisar antes de remover)."""
+    return _group_usage(db, group_name.strip())
+
+
 @schedules_router.delete("/{group_name}", status_code=204)
-def delete_schedule(group_name: str, db: Session = Depends(get_db)):
-    """Remove o grupo do cadastro (publicações e buscas que usam o nome continuam como estão)."""
-    schedule = db.scalar(select(GroupSchedule).where(GroupSchedule.group_name == group_name.strip()))
+def delete_schedule(group_name: str, cancel_pending: bool = False, db: Session = Depends(get_db)):
+    """Remove o grupo do cadastro, dos conjuntos e das campanhas em aberto; as buscas automáticas deixam de agendar para ele.
+    Se ainda houver publicações para sair, só remove com cancel_pending=true (elas são canceladas).
+    O histórico de enviadas fica como está."""
+    name = group_name.strip()
+    usage = _group_usage(db, name)
+    if usage["sending"]:
+        raise HTTPException(409, "Há uma mensagem sendo enviada para este grupo agora. Tente de novo em instantes.")
+    if usage["active"] and not cancel_pending:
+        raise HTTPException(409, f"O grupo tem {usage['active']} publicação(ões) para sair. Confirme para cancelá-las e remover.")
+    if usage["active"]:
+        for p in db.scalars(select(Publication).where(Publication.group_name == name, Publication.status.in_(ACTIVE_STATUSES))):
+            p.status, p.last_error = "cancelled", "Grupo removido do cadastro."
+    for s in db.scalars(select(Search).where(Search.group_name == name)):
+        s.group_name = ""
+    _rewrite_group_lists(db, name, None)
+    schedule = db.scalar(select(GroupSchedule).where(GroupSchedule.group_name == name))
     if schedule:
-        db.delete(schedule); db.commit()
+        db.delete(schedule)
+    db.commit()
     return Response(status_code=204)
+
+
+class GroupRename(BaseModel):
+    new_name: str = Field(min_length=1, max_length=160)
+
+
+@schedules_router.post("/{group_name}/rename", response_model=ScheduleRead)
+def rename_schedule(group_name: str, data: GroupRename, db: Session = Depends(get_db)):
+    """Renomeia o grupo (ex.: o nome mudou no WhatsApp). Leva junto as publicações (inclusive o histórico, para
+    a regra de repostagem continuar valendo), as buscas automáticas, os conjuntos e as campanhas em aberto."""
+    old, new = group_name.strip(), " ".join(data.new_name.split())
+    if not new:
+        raise HTTPException(422, "Informe o novo nome")
+    if new == old:
+        raise HTTPException(422, "O nome novo é igual ao atual")
+    if db.scalar(select(GroupSchedule).where(GroupSchedule.group_name == new)):
+        raise HTTPException(409, f'Já existe um grupo chamado "{new}".')
+    if _group_usage(db, old)["sending"]:
+        raise HTTPException(409, "Há uma mensagem sendo enviada para este grupo agora. Tente de novo em instantes.")
+    schedule = db.scalar(select(GroupSchedule).where(GroupSchedule.group_name == old))
+    if schedule is None:
+        schedule = service.group_schedule(db, old)
+        if schedule.id is None:
+            db.add(schedule)
+    schedule.group_name = new
+    for p in db.scalars(select(Publication).where(Publication.group_name == old)):
+        p.group_name = new
+    for s in db.scalars(select(Search).where(Search.group_name == old)):
+        s.group_name = new
+    _rewrite_group_lists(db, old, new)
+    db.commit()
+    return next(r for r in list_schedules(db) if r.group_name == new)
 
 @schedules_router.get("/{group_name}/next")
 def preview_slots(group_name: str, count: int = 5, db: Session = Depends(get_db)):

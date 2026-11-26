@@ -148,4 +148,4 @@ def test_page_keeps_items_without_price():
     assert data["items"] == [{"section": "individual", "name": "Lápis", "requested": "6", "color": "",
                               "options": [], "default": 0}]
     page = service.render_page(detail)
-    assert "Ainda sem preço conferido" in page and "(LABEL[tab] || tab || '')" in page
+    assert "Ainda sem preço conferido" in page and "(sections[0] || '')" in page

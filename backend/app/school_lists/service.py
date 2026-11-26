@@ -225,7 +225,7 @@ def _greeting(greeting: str, switch_url: str) -> str:
     if not greeting:
         return ""
     link = f' · <a href="{html.escape(switch_url)}">trocar aluno</a>' if switch_url else ""
-    return f'<p class="muted" style="margin:0 0 6px">{html.escape(greeting)}{link}</p>'
+    return f'<p class="hello">{html.escape(greeting)}{link}</p>'
 
 
 def render_landing(school: str, options: list[tuple[str, str]], action: str, contact: str = "", error: str = "",
@@ -240,25 +240,30 @@ def render_landing(school: str, options: list[tuple[str, str]], action: str, con
             .replace("{{STUDENT}}", html.escape(student)).replace("{{CONTACT}}", contact_line)
             .replace("{{DISCLOSURE}}", html.escape(disclosure or "#publi")))
 
-
 LANDING_TEMPLATE = """<!doctype html>
 <html lang="pt-BR">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
 <title>Material escolar · {{SCHOOL}}</title>
 <style>
-*{box-sizing:border-box}body{margin:0;background:#F6F6F3;color:#1B1D1C;font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif}
-main{max-width:460px;margin:0 auto;padding:40px 20px}h1{font-size:26px;margin:0 0 6px}p{line-height:1.5}
-.card{background:#fff;border:1px solid #E4E4DE;border-radius:16px;padding:22px;display:flex;flex-direction:column;gap:14px}
+*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
+body{margin:0;background:#F6F6F3;color:#1B1D1C;font:15px/1.5 Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:460px;margin:0 auto;padding:20px 16px 40px}
+.top{display:flex;justify-content:flex-end;margin-bottom:28px}
+.publi{font-size:12px;font-weight:600;color:#5A5D5B;border:1px solid #E4E4DE;border-radius:6px;padding:3px 8px;background:#fff}
+h1{font-size:26px;line-height:1.2;margin:0 0 8px;letter-spacing:-.01em}p{margin:0 0 20px;color:#4A4D4B}
+.card{background:#fff;border:1px solid #E4E4DE;border-radius:18px;padding:20px;display:flex;flex-direction:column;gap:16px}
 label{display:flex;flex-direction:column;gap:6px;font-size:14px;font-weight:600}
-input[type=text],select{font:inherit;font-size:16px;padding:12px;border:1px solid #CFCFC7;border-radius:10px;background:#fff;color:#1B1D1C}
-.consent{flex-direction:row;align-items:flex-start;gap:10px;font-weight:400;font-size:13px;color:#4A4D4B}
-.consent input{width:20px;height:20px;margin:2px 0 0;accent-color:#0F6E5C;flex:none}
-button{font:inherit;font-size:16px;font-weight:600;padding:14px;border-radius:12px;border:0;background:#0F6E5C;color:#fff;cursor:pointer}
-.err{color:#B3261E;margin:0;font-size:14px}.muted{font-size:12px;color:#5A5D5B;margin:0}
+input[type=text],select{font:inherit;font-size:16px;min-height:48px;padding:10px 12px;border:1px solid #CFCFC7;border-radius:12px;background:#fff;color:#1B1D1C;width:100%}
+input[type=text]:focus,select:focus{outline:2px solid #0F6E5C;outline-offset:1px;border-color:#0F6E5C}
+.consent{flex-direction:row;align-items:flex-start;gap:10px;font-weight:400;font-size:13px;color:#4A4D4B;line-height:1.45}
+.consent input{width:22px;height:22px;margin:0;accent-color:#0F6E5C;flex:none}
+button{font:inherit;font-size:16px;font-weight:700;min-height:50px;border-radius:12px;border:0;background:#0F6E5C;color:#fff;cursor:pointer}
+.err{color:#B3261E;background:#FCEEEE;border-radius:10px;padding:10px 12px;margin:0;font-size:14px}
+@media (min-width:700px){main{padding-top:48px}h1{font-size:32px}}
 </style></head>
 <body><main>
-<p class="muted">{{DISCLOSURE}} · os links são de afiliado; comprar por eles é opcional</p>
+<div class="top"><span class="publi">{{DISCLOSURE}}</span></div>
 <h1>{{SCHOOL}}</h1>
 <p>Informe o nome do aluno e a turma para ver a lista de material da série, com os preços de hoje.</p>
 <form class="card" method="post" action="{{ACTION}}">
@@ -277,52 +282,102 @@ PAGE_TEMPLATE = """<!doctype html>
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>{{TITLE}}</title>
 <style>
-*{box-sizing:border-box}body{margin:0;background:#F6F6F3;color:#1B1D1C;font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif}
-a{color:#0F6E5C}header{background:#fff;border-bottom:1px solid #E4E4DE}
-.wrap{max-width:1160px;margin:0 auto;padding:16px}
-.top{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;font-size:13px;color:#5A5D5B}
-.pill{border:1px solid #E4E4DE;border-radius:999px;padding:5px 10px;color:#1B1D1C}
-h1{font-size:30px;line-height:1.15;margin:10px 0 6px}.lead{margin:0 0 18px;color:#4A4D4B;max-width:640px;line-height:1.5}
-.tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
-.tab{font:inherit;font-size:14px;font-weight:600;padding:10px 16px;border-radius:10px;border:1px solid #CFCFC7;background:#fff;cursor:pointer;color:#1B1D1C}
-.tab[aria-selected=true]{background:#1B1D1C;color:#fff;border-color:#1B1D1C}
-.cols{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}.list{flex:999 1 560px;min-width:0;display:flex;flex-direction:column;gap:10px}
-.card{background:#fff;border:1px solid #E4E4DE;border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:10px}
-.card.off{opacity:.5}.row{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}
-.main{display:flex;gap:12px;flex:1 1 260px;min-width:0;cursor:pointer}
-.img{flex:0 0 84px;width:84px;height:84px;border-radius:10px;border:1px solid #E4E4DE;background:#fff;object-fit:contain}
-.name{font-size:16px;font-weight:600}.muted{font-size:13px;color:#5A5D5B}.prod{font-size:13px;margin-top:2px}
-.qty{display:flex;align-items:center;border:1px solid #CFCFC7;border-radius:10px}
-.qty button{width:40px;height:40px;border:0;background:none;font-size:18px;cursor:pointer}.qty span{min-width:28px;text-align:center;font-weight:600}
-.sub{text-align:right;min-width:96px}.sub b{font-size:18px}
-.opts{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-.opt{font:inherit;font-size:13px;font-weight:600;padding:8px 12px;border-radius:999px;border:1px solid #CFCFC7;background:#fff;cursor:pointer;color:#1B1D1C}
-.opt[aria-pressed=true]{background:#E3F2EE;border-color:#0F6E5C;color:#0A5446}
-.grow{flex:1 1 auto}.chk{display:flex;align-items:center;gap:8px;font-size:13px;color:#4A4D4B;cursor:pointer}
-input[type=checkbox]{width:20px;height:20px;accent-color:#0F6E5C;margin:0}
-.buy{font-size:14px;font-weight:600;text-decoration:none;padding:10px 14px;border-radius:10px;background:#0F6E5C;color:#fff}
-aside{flex:1 1 280px;background:#fff;border:1px solid #E4E4DE;border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:14px;position:sticky;top:12px}
-.total{font-size:38px;font-weight:700;line-height:1}.bar{height:8px;background:#ECECE6;border-radius:999px;overflow:hidden}.bar div{height:8px;background:#0F6E5C}
-.small{font-size:12px;line-height:1.5;color:#5A5D5B;margin:0}.btn2{font:inherit;font-size:14px;font-weight:600;padding:12px;border-radius:12px;border:1px solid #CFCFC7;background:#fff;cursor:pointer}
-@media (max-width:640px){aside{position:static}h1{font-size:24px}}
-@media print{header,.tabs,.buy,.chk,.qty button,.btn2{display:none}aside{position:static}}
+:root{--bg:#F6F6F3;--ink:#1B1D1C;--muted:#5A5D5B;--line:#E4E4DE;--line2:#CFCFC7;--acc:#0F6E5C;--acc2:#E3F2EE;--acc3:#0A5446}
+*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding-bottom:88px}
+a{color:var(--acc)}button{font:inherit;color:inherit}
+header{background:#fff;border-bottom:1px solid var(--line)}
+.wrap{max-width:1120px;margin:0 auto;padding:0 16px}
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:52px}
+.school{font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.publi{flex:none;font-size:12px;font-weight:600;color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:3px 8px}
+.hero{padding:20px 0 4px}.hello{font-size:13px;color:var(--muted);margin:0 0 6px}
+h1{font-size:24px;line-height:1.2;margin:0 0 6px;letter-spacing:-.01em}.lead{margin:0;color:#4A4D4B;max-width:620px}
+.tabs{display:grid;grid-template-columns:1fr 1fr;gap:8px;position:sticky;top:0;z-index:5;background:var(--bg);padding:12px 0}
+.tabs:empty{display:none}
+.tab{text-align:left;padding:11px 12px;border-radius:12px;border:1px solid var(--line2);background:#fff;cursor:pointer;display:flex;justify-content:space-between;align-items:baseline;gap:6px;min-width:0}
+.tab span{font-weight:700;font-size:15px}.tab small{font-size:13px;color:var(--muted);white-space:nowrap}.tab em{display:none;font-style:normal}
+.tab[aria-selected=true]{background:var(--ink);border-color:var(--ink);color:#fff}.tab[aria-selected=true] small{color:#CFD2CF}
+.layout{display:grid;gap:16px;padding:4px 0 24px}
+.list{display:flex;flex-direction:column;gap:12px;min-width:0}
+.card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:14px;display:grid;gap:12px;align-items:start;
+  grid-template-columns:72px minmax(0,1fr);grid-template-areas:"img info" "opts opts" "foot foot" "acts acts"}
+.card.done{border-color:#9FCFC3;background:#FBFDFC}
+.img{grid-area:img;width:72px;height:72px;border-radius:12px;border:1px solid var(--line);background:#fff;object-fit:contain}
+.ph{display:flex;align-items:center;justify-content:center;color:#A3A6A3;background:#FAFAF8}
+.info{grid-area:info;min-width:0}
+.name{font-size:16px;font-weight:700;margin:0;line-height:1.3}
+.meta{margin:3px 0 0;font-size:13px;color:var(--muted)}
+.prod{margin:4px 0 0;font-size:13px;color:#3A3D3B;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.opts{grid-area:opts;display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;margin:0 -14px;padding:2px 14px}
+.opts::-webkit-scrollbar{display:none}
+.opt{flex:0 0 auto;min-width:108px;display:flex;flex-direction:column;align-items:flex-start;gap:1px;padding:8px 12px;border-radius:12px;border:1px solid var(--line2);background:#fff;cursor:pointer}
+.opt span{font-size:12px;color:var(--muted)}.opt b{font-size:15px}
+.opt[aria-pressed=true]{border-color:var(--acc);background:var(--acc2);box-shadow:inset 0 0 0 1px var(--acc)}.opt[aria-pressed=true] span{color:var(--acc3)}
+.foot{grid-area:foot;display:flex;align-items:center;justify-content:space-between;gap:12px}
+.qty{display:flex;align-items:center;border:1px solid var(--line2);border-radius:12px;background:#fff}
+.qty button{width:44px;height:44px;border:0;background:none;font-size:20px;cursor:pointer}
+.qty span{min-width:24px;text-align:center;font-weight:700}
+.price{display:flex;flex-direction:column;align-items:flex-end;text-align:right}
+.price b{font-size:20px;line-height:1.15}.was{font-size:12px;color:var(--muted)}.was s{margin-left:4px}
+.each{font-size:12px;color:var(--muted)}.pct{color:var(--acc3);font-weight:700}
+.acts{grid-area:acts;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
+.buy{grid-column:1/-1;display:flex;align-items:center;justify-content:center;min-height:46px;border-radius:12px;background:var(--acc);color:#fff;font-weight:700;text-decoration:none}
+.tog{font-weight:600;font-size:14px;min-height:42px;border-radius:12px;border:1px solid var(--line2);background:#fff;cursor:pointer;padding:0 14px}
+.tog[aria-pressed=true]{background:var(--acc2);border-color:var(--acc);color:var(--acc3)}
+.link{font-size:14px;font-weight:600;background:none;border:0;color:var(--muted);text-decoration:underline;cursor:pointer;padding:0 6px;min-height:42px}
+.card.off{grid-template-areas:"img info" "undo undo"}.card.off .img,.card.off .info{opacity:.55}
+.undo{grid-area:undo;display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;color:var(--muted);border-top:1px dashed var(--line);padding-top:4px}
+.card.nop{grid-template-areas:"img info"}
+.empty{background:#fff;border:1px dashed var(--line2);border-radius:16px;padding:28px 20px;text-align:center;display:flex;flex-direction:column;gap:4px}
+.sum{background:#fff;border:1px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:14px}
+.label{font-size:13px;color:var(--muted)}.total{font-size:34px;font-weight:800;line-height:1.05;letter-spacing:-.02em}
+.row{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:14px}
+.bar{height:8px;background:#ECECE6;border-radius:999px;overflow:hidden;margin-top:6px}.bar i{display:block;height:100%;width:0;background:var(--acc);border-radius:999px;transition:width .2s}
+.split{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--line);padding-top:12px}.split:empty{display:none}.split .all{font-weight:700}
+.btn2{font-size:14px;font-weight:600;min-height:44px;border-radius:12px;border:1px solid var(--line2);background:#fff;cursor:pointer}
+.small{font-size:12px;line-height:1.5;color:var(--muted);margin:0}
+.mbar{transition:transform .2s}.mbar.hide{transform:translateY(110%)}
+.mbar{position:fixed;left:0;right:0;bottom:0;z-index:10;background:#fff;border-top:1px solid var(--line);box-shadow:0 -6px 18px rgba(0,0,0,.06);padding:10px 16px calc(10px + env(safe-area-inset-bottom))}
+.mbar .in{max-width:1120px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:16px}
+.mbar small{display:block;font-size:12px;color:var(--muted)}.mbar b{font-size:22px;letter-spacing:-.01em}
+.mbar .cart{text-align:right;font-size:13px;width:128px}
+@media (min-width:900px){
+  body{padding-bottom:0}.mbar{display:none}
+  .hero{padding:32px 0 4px}h1{font-size:32px}
+  .tabs{position:static;display:flex;padding:20px 0 12px}.tab{min-width:230px;flex-direction:column;align-items:flex-start;gap:1px}.tab em{display:inline}.tab small{font-size:12px}
+  .layout{grid-template-columns:minmax(0,1fr) 320px;align-items:start}aside{position:sticky;top:16px}
+  .card{grid-template-columns:96px minmax(0,1fr) 250px;grid-template-areas:"img info foot" "img opts acts";padding:16px 18px;gap:12px 20px}
+  .img{width:96px;height:96px}.opts{margin:0;padding:0;flex-wrap:wrap;overflow:visible}.opt{min-width:0;padding:7px 11px}
+  .card.off{grid-template-areas:"img info undo"}.undo{border:0;padding:0;flex-direction:column;align-items:flex-end}
+  .card.nop{grid-template-areas:"img info info"}
+}
+@media print{
+  body{padding:0;background:#fff}header,.tabs,.buy,.tog,.link,.qty button,.btn2,.mbar{display:none}
+  .layout{grid-template-columns:1fr}.card{break-inside:avoid}aside{position:static}
+}
 </style>
 </head>
 <body>
-<header><div class="wrap top"><span class="pill">{{SCHOOL}}</span><span class="grow"></span><span>{{DISCLOSURE}} · os links são de afiliado; comprar por eles é opcional</span></div></header>
+<header><div class="wrap top"><span class="school">{{SCHOOL}}</span><span class="publi">{{DISCLOSURE}}</span></div></header>
 <main class="wrap">
-{{GREETING}}<h1>{{TITLE}}</h1>
-<p class="lead">A lista da série já vem pronta. Desmarque o que você já tem, escolha a opção de cada item e compre no Mercado Livre item por item.</p>
-<div class="tabs" role="tablist" id="tabs"></div>
-<div class="cols"><section class="list" id="list"></section>
-<aside aria-live="polite"><div class="muted" id="sumTitle"></div><div><div class="total" id="total"></div><div class="muted" id="count" style="margin-top:6px"></div></div>
-<div><div class="muted" style="display:flex;justify-content:space-between"><span>No carrinho</span><b id="cartLabel"></b></div><div class="bar"><div id="cartBar"></div></div></div>
+<div class="hero">{{GREETING}}<h1>{{TITLE}}</h1>
+<p class="lead">Marque o que você já tem em casa, escolha uma opção de cada item e compre no Mercado Livre.</p></div>
+<nav class="tabs" role="tablist" id="tabs"></nav>
+<div class="layout"><section class="list" id="list" aria-live="polite"></section>
+<aside><div class="sum" id="sum">
+<div><div class="label" id="sumTitle"></div><div class="total" id="total"></div><div class="label" id="count" style="margin-top:6px"></div></div>
+<div><div class="row"><span class="label">No carrinho</span><b id="cartLabel"></b></div><div class="bar"><i id="cartBar"></i></div></div>
+<div class="split" id="split"></div>
 <button class="btn2" onclick="window.print()">Imprimir ou salvar em PDF</button>
-<p class="small">Preços conferidos em {{STAMP}}. O preço e o estoque finais são os do Mercado Livre na hora da compra. O Mercado Livre não deixa colocar vários produtos no carrinho de uma vez: abra cada item e marque "Já pus no carrinho".</p></aside></div>
+<p class="small">Preços conferidos em {{STAMP}}. O preço e o estoque finais são os do Mercado Livre na hora da compra. O Mercado Livre não deixa colocar vários produtos no carrinho de uma vez: abra cada item e marque "Pus no carrinho".</p>
+</div></aside></div>
 </main>
+<div class="mbar"><div class="in"><div><small id="mbLabel"></small><b id="mbTotal"></b></div>
+<div class="cart"><span id="mbCart"></span><div class="bar"><i id="mbBar"></i></div></div></div></div>
 <script>
 const D = {{DATA}};
 const KEY = 'orcamento:' + D.school + ':' + D.grade + ':' + D.year;
@@ -331,54 +386,86 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&am
 let S = {};
 try { S = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { S = {}; }
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
-const st = i => S[i] || (S[i] = {inc: true, opt: D.items[i].default, qty: (D.items[i].options[D.items[i].default] || {qty: 1}).qty, cart: false});
+const st = i => {
+  const it = D.items[i], s = S[i] || (S[i] = {inc: true, opt: it.default, qty: (it.options[it.default] || {qty: 1}).qty, cart: false});
+  if (!it.options[s.opt]) s.opt = 0;
+  return s;
+};
 const sections = [...new Set(D.items.map(i => i.section))];
-let tab = sections.includes('coletivo') ? 'coletivo' : sections[0];
-const LABEL = {coletivo: 'Coletivo (vai para a escola)', individual: 'Individual (fica com a criança)'};
+let tab = sections.includes('coletivo') ? 'coletivo' : (sections[0] || '');
+const LABEL = {coletivo: ['Coletivo', 'vai para a escola'], individual: ['Individual', 'fica com a criança']};
+const nameOf = s => (LABEL[s] || [s || ''])[0];
+const PH = '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16M6 16l10-10 3 3-10 10H6z"/></svg>';
+function sum(section) {
+  const r = {total: 0, n: 0, c: 0, priced: 0, all: 0};
+  D.items.forEach((it, i) => {
+    if (it.section !== section) return;
+    r.all++;
+    if (!it.options.length) return;
+    r.priced++;
+    const s = st(i);
+    if (s.inc) { r.total += it.options[s.opt].price * s.qty; r.n++; if (s.cart) r.c++; }
+  });
+  return r;
+}
+function card(it, i) {
+  const meta = [it.requested ? 'Pedido: ' + esc(it.requested) : '', it.color ? 'Cor: ' + esc(it.color) : ''].filter(Boolean).join(' · ');
+  const head = title => `<div class="info"><h3 class="name">${esc(it.name)}</h3>${meta ? `<p class="meta">${meta}</p>` : ''}${title}</div>`;
+  if (!it.options.length) return `<article class="card nop"><span class="img ph">${PH}</span>${head('<p class="meta">Ainda sem preço conferido; fica fora do total.</p>')}</article>`;
+  const s = st(i), o = it.options[s.opt];
+  const img = o.image ? `<img class="img" src="${esc(o.image)}" alt="" referrerpolicy="no-referrer" loading="lazy">` : `<span class="img ph">${PH}</span>`;
+  const info = head(`<p class="prod">${esc(o.title)}</p>`);
+  if (!s.inc) return `<article class="card off">${img}${info}<div class="undo"><span>Você já tem este item.</span><button class="link" data-i="${i}" data-act="have">Desfazer</button></div></article>`;
+  const pct = o.original_price && o.original_price > o.price ? Math.round((1 - o.price / o.original_price) * 100) : 0;
+  const opts = it.options.length > 1 ? `<div class="opts" role="group" aria-label="Opções">${it.options.map((x, j) =>
+    `<button class="opt" aria-pressed="${j === s.opt}" data-i="${i}" data-opt="${j}"><span>${esc(x.label || 'Opção ' + (j + 1))}</span><b>${brl(x.price)}</b></button>`).join('')}</div>` : '';
+  const each = s.qty > 1 ? brl(o.price) + ' cada' : '';
+  return `<article class="card${s.cart ? ' done' : ''}">${img}${info}${opts}
+    <div class="foot"><div class="qty"><button data-i="${i}" data-act="minus" aria-label="Diminuir quantidade">−</button><span>${s.qty}</span><button data-i="${i}" data-act="plus" aria-label="Aumentar quantidade">+</button></div>
+    <div class="price">${pct >= 5 ? `<span class="was"><span class="pct">-${pct}%</span><s>${brl(o.original_price * s.qty)}</s></span>` : ''}<b>${brl(o.price * s.qty)}</b>${each ? `<span class="each">${each}</span>` : ''}</div></div>
+    <div class="acts"><a class="buy" href="${esc(o.url)}" target="_blank" rel="noopener sponsored">Comprar no Mercado Livre</a>
+    <button class="tog" data-i="${i}" data-act="cart" aria-pressed="${s.cart}">${s.cart ? '✓ No carrinho' : 'Pus no carrinho'}</button>
+    <button class="link" data-i="${i}" data-act="have">Já tenho</button></div></article>`;
+}
 function render() {
-  document.getElementById('tabs').innerHTML = sections.map(s => `<button class="tab" role="tab" aria-selected="${s === tab}" data-tab="${s}">${esc(LABEL[s] || s)}</button>`).join('');
-  let total = 0, n = 0, c = 0, shown = 0;
-  document.getElementById('list').innerHTML = D.items.map((it, i) => {
-    if (it.section !== tab) return '';
-    if (!it.options.length) return `<article class="card"><div class="row"><div class="main"><span class="img"></span>
-      <span><span class="name">${esc(it.name)}</span>${it.requested ? `<div class="muted">Pedido pela escola: ${esc(it.requested)}</div>` : ''}${it.color ? `<div class="muted">Cor: ${esc(it.color)}</div>` : ''}<div class="prod muted">Ainda sem preço conferido; fica fora do total.</div></span></div></div></article>`;
-    shown++;
-    const s = st(i), o = it.options[s.opt] || it.options[0], sub = o.price * s.qty;
-    if (s.inc) { total += sub; n++; if (s.cart) c++; }
-    const opts = it.options.map((x, j) => `<button class="opt" aria-pressed="${j === s.opt}" data-i="${i}" data-opt="${j}">${esc(x.label)} · ${brl(x.price)}</button>`).join('');
-    const img = o.image ? `<img class="img" src="${esc(o.image)}" alt="" referrerpolicy="no-referrer" loading="lazy">` : '<span class="img"></span>';
-    return `<article class="card${s.inc ? '' : ' off'}"><div class="row">
-      <label class="main"><input type="checkbox" data-i="${i}" data-act="inc" ${s.inc ? 'checked' : ''} aria-label="Incluir ${esc(it.name)} no orçamento">${img}
-      <span><span class="name">${esc(it.name)}</span>${it.requested ? `<div class="muted">Pedido pela escola: ${esc(it.requested)}</div>` : ''}${it.color ? `<div class="muted">Cor: ${esc(it.color)}</div>` : ''}<div class="prod">${esc(o.title)}</div></span></label>
-      <div class="row" style="align-items:center"><div class="qty"><button data-i="${i}" data-act="minus" aria-label="Diminuir quantidade">−</button><span>${s.qty}</span><button data-i="${i}" data-act="plus" aria-label="Aumentar quantidade">+</button></div>
-      <div class="sub"><b>${brl(sub)}</b><div class="muted">${brl(o.price)} cada</div></div></div></div>
-      <div class="opts">${opts}<span class="grow"></span><label class="chk"><input type="checkbox" data-i="${i}" data-act="cart" ${s.cart ? 'checked' : ''}> Já pus no carrinho</label>
-      <a class="buy" href="${esc(o.url)}" target="_blank" rel="noopener sponsored">Abrir no Mercado Livre</a></div></article>`;
-  }).join('') || '<article class="card"><span class="name">A lista ainda está sendo preparada.</span><span class="muted">Os preços estão sendo conferidos. Volte daqui a pouco.</span></article>';
-  document.getElementById('sumTitle').textContent = ['Seu orçamento', D.grade, (LABEL[tab] || tab || '').split(' (')[0]].filter(Boolean).join(' · ');
-  document.getElementById('total').textContent = brl(total);
-  document.getElementById('count').textContent = n + ' de ' + shown + ' itens incluídos';
-  document.getElementById('cartLabel').textContent = c + ' de ' + n;
-  document.getElementById('cartBar').style.width = (n ? Math.round(c / n * 100) : 0) + '%';
+  const sums = Object.fromEntries(sections.map(s => [s, sum(s)]));
+  document.getElementById('tabs').innerHTML = sections.length < 2 ? '' : sections.map(s =>
+    `<button class="tab" role="tab" aria-selected="${s === tab}" data-tab="${s}"><span>${esc(nameOf(s))}</span><small><em>${esc((LABEL[s] || ['', ''])[1])} · </em>${brl(sums[s].total)}</small></button>`).join('');
+  document.getElementById('list').innerHTML = D.items.map((it, i) => it.section === tab ? card(it, i) : '').join('')
+    || '<div class="empty"><b>A lista ainda está sendo preparada.</b><span class="label">Os preços estão sendo conferidos. Volte daqui a pouco.</span></div>';
+  const t = sums[tab] || {total: 0, n: 0, c: 0, priced: 0, all: 0};
+  const label = ['Seu orçamento', nameOf(tab)].filter(Boolean).join(' · ');
+  const width = (t.n ? Math.round(t.c / t.n * 100) : 0) + '%';
+  document.getElementById('sumTitle').textContent = label;
+  document.getElementById('total').textContent = brl(t.total);
+  document.getElementById('count').textContent = t.n + ' de ' + t.all + ' itens no orçamento';
+  document.getElementById('cartLabel').textContent = t.c + ' de ' + t.n;
+  document.getElementById('cartBar').style.width = width;
+  document.getElementById('mbLabel').textContent = label;
+  document.getElementById('mbTotal').textContent = brl(t.total);
+  document.getElementById('mbCart').textContent = t.c + ' de ' + t.n + ' no carrinho';
+  document.getElementById('mbBar').style.width = width;
+  const all = sections.reduce((a, s) => a + sums[s].total, 0);
+  document.getElementById('split').innerHTML = sections.length < 2 ? '' : sections.map(s =>
+    `<div class="row"><span>${esc(nameOf(s))}</span><span>${brl(sums[s].total)}</span></div>`).join('')
+    + `<div class="row all"><span>Total da série</span><span>${brl(all)}</span></div>`;
 }
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-tab],[data-opt],[data-act=minus],[data-act=plus]');
+  const t = e.target.closest('[data-tab],[data-opt],[data-act]');
   if (!t) return;
-  if (t.dataset.tab) { tab = t.dataset.tab; render(); return; }
-  const i = Number(t.dataset.i), s = st(i);
+  if (t.dataset.tab) { tab = t.dataset.tab; render(); window.scrollTo({top: document.getElementById('tabs').offsetTop - 4}); return; }
+  const i = Number(t.dataset.i), s = st(i), act = t.dataset.act;
   if (t.dataset.opt) { s.opt = Number(t.dataset.opt); s.qty = D.items[i].options[s.opt].qty; }
-  if (t.dataset.act === 'minus') s.qty = Math.max(1, s.qty - 1);
-  if (t.dataset.act === 'plus') s.qty = s.qty + 1;
-  save(); render();
-});
-document.addEventListener('change', e => {
-  const t = e.target; if (!t.dataset || !t.dataset.act) return;
-  const s = st(Number(t.dataset.i));
-  if (t.dataset.act === 'inc') s.inc = t.checked;
-  if (t.dataset.act === 'cart') s.cart = t.checked;
+  if (act === 'minus') s.qty = Math.max(1, s.qty - 1);
+  if (act === 'plus') s.qty = s.qty + 1;
+  if (act === 'cart') s.cart = !s.cart;
+  if (act === 'have') { s.inc = !s.inc; if (!s.inc) s.cart = false; }
   save(); render();
 });
 render();
+// No celular, a barra de baixo some quando o resumo completo já está na tela.
+if ('IntersectionObserver' in window) new IntersectionObserver(es => es.forEach(e =>
+  document.querySelector('.mbar').classList.toggle('hide', e.isIntersecting))).observe(document.getElementById('sum'));
 </script>
 </body>
 </html>

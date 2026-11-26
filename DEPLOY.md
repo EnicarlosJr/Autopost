@@ -92,6 +92,8 @@ openssl rand -base64 48
 
 ## 3. Subir
 
+**Atalho para a primeira vez:** `sh deploy/primeira-instalacao.sh seudominio.com.br seu-email@exemplo.com` cria o `.env.production` com senhas geradas no próprio servidor, espera o DNS apontar para o servidor, sobe tudo e mostra o login do painel. Nas próximas vezes, use só o `deploy.sh`.
+
 ```bash
 sh deploy/deploy.sh
 ```

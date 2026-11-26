@@ -50,10 +50,24 @@ def search_url(term: str) -> str:
     return f"https://lista.mercadolivre.com.br/{quote(slug, safe='-')}"
 
 
-# Ofertas do dia do Mercado Livre: várias ofertas boas numa página só, em várias páginas.
-OFFERS_URL = "https://www.mercadolivre.com.br/ofertas?container_id=MLB1599405-1"
-OFFERS_WORDS = {"ofertas do dia", "ofertas", "oferta do dia"}
+# Área de ofertas do Mercado Livre (www.mercadolivre.com.br/ofertas). Conferido em 26/11/2026 no site:
+# os tipos de promoção e o filtro de categoria combinam entre si e aceitam subcategorias (ex.: category=MLB23332).
+OFFERS_BASE = "https://www.mercadolivre.com.br/ofertas"
+OFFER_KINDS: dict[str, tuple[str, list[tuple[str, str]]]] = {
+    "all": ("Todas as ofertas", []),
+    "lightning": ("Ofertas relâmpago", [("promotion_type", "lightning")]),
+    "deal_of_the_day": ("Oferta do dia", [("promotion_type", "deal_of_the_day")]),
+    "unbeatable": ("Preços imbatíveis", [("container_id", "MLB1298579-1"), ("deal_ids", "MLB1298579")]),
+    "outlet": ("Outlet", [("container_id", "MLB916440-2")]),
+}
+OFFERS_URL = f"{OFFERS_BASE}?promotion_type=deal_of_the_day"
+# Palavras aceitas na busca automática (uma por linha) para cada seção.
+OFFERS_WORDS = {"ofertas do dia": "deal_of_the_day", "oferta do dia": "deal_of_the_day", "ofertas": "all", "todas as ofertas": "all",
+                "ofertas relampago": "lightning", "oferta relampago": "lightning", "relampago": "lightning",
+                "precos imbativeis": "unbeatable", "outlet": "outlet"}
 OFFERS_PAGES = 3
+OFFERS_MAX_PAGE = 20          # o ML mostra até a página 20
+OFFERS_MAX_URLS = 12          # teto de páginas numa busca: ~50 anúncios cada, e a extensão manda até 600
 ML_HOSTS = {"www.mercadolivre.com.br", "lista.mercadolivre.com.br", "mercadolivre.com.br"}
 
 
@@ -66,28 +80,51 @@ def is_ml_url(text: str) -> bool:
     return parts.scheme == "https" and parts.hostname in ML_HOSTS
 
 
+def offer_kind_of(text: str) -> str | None:
+    """Seção de ofertas citada por uma palavra da busca automática ("ofertas relâmpago" etc.)."""
+    return OFFERS_WORDS.get(plain(" ".join((text or "").split())))
+
+
 def is_offers(text: str) -> bool:
-    t = " ".join((text or "").strip().lower().split())
-    return t in OFFERS_WORDS or (is_ml_url(t) and urlsplit(t).path.rstrip("/") == "/ofertas")
+    t = " ".join((text or "").strip().split())
+    return offer_kind_of(t) is not None or (is_ml_url(t) and urlsplit(t).path.rstrip("/") == "/ofertas")
 
 
-def offer_pages(url: str = OFFERS_URL, pages: int = OFFERS_PAGES) -> list[dict]:
-    """Páginas 1..N de uma página de ofertas do ML (sem o trecho depois de #)."""
+def offer_pages(url: str = OFFERS_URL, pages: int = OFFERS_PAGES, start: int = 1, label: str = "") -> list[dict]:
+    """Páginas start..start+N-1 de uma página de ofertas do ML (sem o trecho depois de #)."""
     parts = urlsplit(url if is_ml_url(url) else OFFERS_URL)
     query = [(k, v) for k, v in parse_qsl(parts.query) if k != "page"]
+    label = label or "ofertas"
+    first = max(1, min(OFFERS_MAX_PAGE, start))
     out = []
-    for page in range(1, max(1, min(5, pages)) + 1):
+    for page in range(first, min(OFFERS_MAX_PAGE, first + max(1, min(5, pages)) - 1) + 1):
         q = urlencode(query + ([("page", str(page))] if page > 1 else []))
-        out.append({"term": f"ofertas do dia, página {page}",
-                    "url": urlunsplit(("https", parts.hostname, parts.path or "/ofertas", q, ""))})
+        out.append({"term": f"{label}, página {page}", "url": urlunsplit(("https", parts.hostname, parts.path or "/ofertas", q, ""))})
     return out
+
+
+def offer_urls(kinds: list[str], categories: list[str], pages: int = OFFERS_PAGES, start: int = 1) -> list[dict]:
+    """Páginas a ler na área de ofertas: cada seção escolhida x cada categoria (ou nenhuma) x páginas.
+    Se passar de OFFERS_MAX_URLS, lê menos páginas por combinação (mínimo 1) e corta o resto."""
+    kinds = [k for k in dict.fromkeys(kinds or ["all"]) if k in OFFER_KINDS] or ["all"]
+    cats = [c for c in dict.fromkeys(categories) if re.fullmatch(r"MLB\d+", c or "")] or [None]
+    combos = [(k, c) for k in kinds for c in cats]
+    per = max(1, min(max(1, min(5, pages)), OFFERS_MAX_URLS // len(combos)))
+    out = []
+    for kind, cat in combos:
+        query = list(OFFER_KINDS[kind][1]) + ([("category", cat)] if cat else [])
+        url = OFFERS_BASE + ("?" + urlencode(query) if query else "")
+        out += offer_pages(url, per, start, OFFER_KINDS[kind][0] + (f" em {cat}" if cat else ""))
+    return out[:OFFERS_MAX_URLS]
 
 
 def pages_for(term: str, pages: int = OFFERS_PAGES) -> list[dict]:
     """O que a extensão lê para um termo: busca por palavra, página de ofertas (com paginação) ou um link do ML."""
     term = (term or "").strip()
     if is_offers(term):
-        return offer_pages(term if is_ml_url(term) else OFFERS_URL, pages)
+        if is_ml_url(term):
+            return offer_pages(term, pages)
+        return offer_urls([offer_kind_of(term) or "deal_of_the_day"], [], pages)
     if is_ml_url(term):
         parts = urlsplit(term)
         return [{"term": term[:160], "url": urlunsplit(("https", parts.hostname, parts.path, parts.query, ""))}]

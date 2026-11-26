@@ -65,14 +65,49 @@ function readSearchPage() {
       catalog_product_id: catalogId.toUpperCase() || null,
     });
   }
-  return {blocked: false, items, source: 'cartões'};
+  if (items.length) return {blocked: false, items, source: 'cartões'};
+
+  // 3) Cartões antigos da página de Ofertas do dia (promotion-item).
+  for (const card of document.querySelectorAll('.promotion-item, [class*="promotion-item__"]')) {
+    if (!card.classList.contains('promotion-item')) continue;
+    const link = card.querySelector('a.promotion-item__link-container, a[href]');
+    let url;
+    try { url = new URL(link?.href || ''); } catch { continue; }
+    if (/click1\./.test(url.hostname) || !/mercadolivre\.com\.br$/.test(url.hostname)) continue;
+    const fromPath = url.pathname.match(/(MLBU?)-?(\d{6,})/i);
+    const catalogId = (url.pathname.match(/\/p\/(MLB\d+)/i) || [])[1] || '';
+    const externalId = fromPath ? `${fromPath[1]}${fromPath[2]}`.toUpperCase() : catalogId.toUpperCase();
+    if (!externalId) continue;
+    const title = (card.querySelector('.promotion-item__title, p, h2, h3')?.textContent || '').trim();
+    if (!title) continue;
+    const img = card.querySelector('img');
+    items.push({
+      external_id: externalId,
+      url: /^MLB\d+$/i.test(externalId) && !catalogId ? `https://produto.mercadolivre.com.br/MLB-${externalId.slice(3)}` : url.origin + url.pathname,
+      title,
+      image_url: img?.getAttribute('data-src') || img?.currentSrc || img?.src || '',
+      seller: (card.querySelector('.promotion-item__seller')?.textContent || '').replace(/^por\s+/i, '').trim(),
+      price: money(card.querySelector('.andes-money-amount:not(.andes-money-amount--previous)')),
+      original_price: money(card.querySelector('.andes-money-amount--previous')),
+      price_note: /no\s*pix/i.test(card.textContent || '') ? 'no Pix' : '',
+      rating: null, sold: null,
+      free_shipping: /gr[aá]tis/i.test(card.querySelector('.promotion-item__shipping, [class*="shipping"]')?.textContent || ''),
+      catalog_product_id: catalogId.toUpperCase() || null,
+    });
+  }
+  return {blocked: false, items, source: items.length ? 'ofertas' : 'cartões'};
 
   function readPayload() {
     // Trechos no formato _n.ctx.s["..."].q("0:{...}") com cada anúncio em "polycard":{...}.
     const chunks = [];
     for (const script of document.querySelectorAll('script')) {
       const text = script.textContent || '';
-      if (!text.startsWith('_n.ctx.s[') || !text.includes('polycard')) continue;
+      if (!text.includes('polycard')) continue;
+      if (!text.startsWith('_n.ctx.s[')) {
+        // Outras páginas (ex.: Ofertas do dia) trazem os mesmos cartões num JSON comum (__PRELOADED_STATE__).
+        chunks.push(text);
+        continue;
+      }
       const m = text.match(/\.q\(("(?:[^"\\]|\\.)*")\);?\s*$/s);
       if (!m) continue;
       try { chunks.push(JSON.parse(m[1])); } catch { /* trecho incompleto */ }

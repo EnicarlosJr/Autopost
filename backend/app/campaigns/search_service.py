@@ -18,7 +18,7 @@ from app.models.product import Product
 from app.models.search import Listing
 from app.products.urls import normalize_product_url
 from app.publications.service import record_event
-from app.searches.service import product_for, search_url, upsert_listing
+from app.searches.service import OFFERS_PAGES, offer_pages, pages_for, product_for, upsert_listing
 
 LEASE_MINUTES = 10
 MAX_TERMS = 10
@@ -67,9 +67,24 @@ def genders_in(text: str) -> set[str]:
     return {g for g, vocab in GENDER_WORDS.items() if words & vocab}
 
 
+def from_offers(search: CampaignSearch) -> bool:
+    return jl(search.filters, {}).get("source") == "offers"
+
+
+def pages_of(search: CampaignSearch) -> list[dict]:
+    """Páginas que a extensão lê: as buscas por palavra ou as páginas das Ofertas do dia."""
+    if from_offers(search):
+        return offer_pages(pages=int(jl(search.filters, {}).get("offers_pages") or OFFERS_PAGES))
+    return [page for term in terms_of(search) for page in pages_for(term)]
+
+
 def terms_of(search: CampaignSearch) -> list[str]:
     """Palavras-chave da busca; sem palavras, usa o nome de cada categoria escolhida.
-    Com público definido, acrescenta "masculino" ou "feminino" a quem ainda não cita o público."""
+    Com público definido, acrescenta "masculino" ou "feminino" a quem ainda não cita o público.
+    Nas Ofertas do dia, as palavras não são buscadas: filtram o título (ver reject_reason)."""
+    if from_offers(search):
+        pages = int(jl(search.filters, {}).get("offers_pages") or OFFERS_PAGES)
+        return [f"Ofertas do dia ({pages} página{'s' if pages > 1 else ''})"]
     words = [w for w in jl(search.keywords, []) if isinstance(w, str) and w.strip()]
     if not words:
         words = [c.get("name") or c.get("id") for c in jl(search.categories, []) if isinstance(c, dict)]
@@ -104,6 +119,12 @@ def reject_reason(db: Session, search: CampaignSearch, listing: Listing, allowed
             cat = db.get(MlCategory, listing.ml_category_id)
             return f"fora das categorias ({cat.name if cat else listing.ml_category_id})"
     title = plain(listing.title)
+    if from_offers(search):
+        # Ofertas do dia: as palavras do nicho/busca precisam aparecer no título (basta uma delas).
+        wanted = [w for w in jl(search.keywords, []) if isinstance(w, str) and plain(w).strip()]
+        words = set(re.findall(r"\w+", title))
+        if wanted and not any(set(re.findall(r"\w+", plain(w))) <= words for w in wanted):
+            return "não cita as palavras-chave"
     for word in jl(search.exclude_keywords, []):
         if plain(word) and plain(word) in title:
             return f'contém "{word}"'

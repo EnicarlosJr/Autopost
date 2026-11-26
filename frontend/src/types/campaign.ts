@@ -37,7 +37,8 @@ export type Gender = 'any' | 'male' | 'female';
 export const GENDER_LABEL: Record<Gender, string> = {any: 'Todos', male: 'Masculino', female: 'Feminino'};
 export type SearchFilters = {min_price: number | null; max_price: number | null; min_discount: number; min_rating: number | null; free_shipping: boolean;
   allow_uncategorized: boolean; gender: Gender; gender_strict: boolean;
-  trust: 'off' | 'basic' | 'high' | 'custom'; min_sold: number; official_or_full: boolean; exclude_suspicious: boolean};
+  trust: 'off' | 'basic' | 'high' | 'custom'; min_sold: number; official_or_full: boolean; exclude_suspicious: boolean;
+  source?: 'search' | 'offers'; offers_pages?: number};
 export type CampaignSearch = {
   id: number; campaign_id: number; niche_id: number | null; niche_name: string; categories: OfficialCategory[]; keywords: string[];
   exclude_keywords: string[]; filters: SearchFilters; terms: string[]; status: 'queued' | 'running' | 'done' | 'no_results' | 'failed';

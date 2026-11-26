@@ -18,7 +18,7 @@ from app.models.search import GroupSchedule, Search
 from app.campaigns import service
 from app.campaigns.service import clean_list, jload, tags_of
 from app.searches import ranking
-from app.searches.service import search_url
+
 
 router = APIRouter(prefix="/api/campaigns", tags=["campaigns"])
 LISTS = ("product_ids", "categories", "exclude_categories", "tags", "exclude_tags", "groups", "weekdays",
@@ -344,6 +344,9 @@ class SearchFilters(BaseModel):
     min_sold: int = Field(default=0, ge=0, le=1000000)
     official_or_full: bool = False
     exclude_suspicious: bool = False
+    # Onde buscar: "search" (uma busca por palavra-chave) ou "offers" (Ofertas do dia do ML, as palavras filtram o título).
+    source: str = Field(default="search", pattern="^(search|offers)$")
+    offers_pages: int = Field(default=3, ge=1, le=5)
 
 class SearchCreate(BaseModel):
     niche_id: int | None = None
@@ -419,7 +422,7 @@ def create_search(campaign_id: int, data: SearchCreate, db: Session = Depends(ge
     if len(known) != len(set(ids)):
         raise HTTPException(422, "Há categorias fora do catálogo oficial. Atualize as categorias em Meu perfil.")
     keywords = clean_list(data.keywords)
-    if not keywords and not ids:
+    if not keywords and not ids and data.filters.source != "offers":
         raise HTTPException(422, "Informe pelo menos uma palavra-chave ou uma categoria.")
     s = CampaignSearch(campaign_id=c.id, niche_id=niche.id if niche else None, niche_name=niche.name if niche else "",
                        categories=json.dumps([{"id": x.id, "include_children": x.include_children, "name": known[x.id].name,
@@ -458,7 +461,8 @@ def create_searches_by_niche(campaign_id: int, data: NicheSearches, db: Session 
             skipped.append(n.name)
             continue
         filters = data.filters.model_copy(update={"gender": n.gender if n.gender in ("male", "female") else "any"})
-        size = search_service.MAX_TERMS
+        # Nas Ofertas do dia as palavras só filtram o título: uma busca por nicho, com todas as palavras.
+        size = (len(keywords) or 1) if filters.source == "offers" else search_service.MAX_TERMS
         for chunk in ([keywords[i:i + size] for i in range(0, len(keywords), size)] or [[]]):
             s = CampaignSearch(campaign_id=c.id, niche_id=n.id, niche_name=n.name, categories=categories,
                                keywords=json.dumps(chunk, ensure_ascii=False),
@@ -640,7 +644,7 @@ def due_campaign_search(db: Session = Depends(get_db), user: User = Depends(requ
     if s is None:
         return None
     db.commit()
-    return {"id": s.id, "campaign_id": s.campaign_id, "terms": [{"term": t, "url": search_url(t)} for t in search_service.terms_of(s)]}
+    return {"id": s.id, "campaign_id": s.campaign_id, "terms": search_service.pages_of(s)}
 
 @searches_router.post("/{search_id}/results")
 def receive_campaign_results(search_id: int, data: SearchResults, db: Session = Depends(get_db), user: User = Depends(require_user)):

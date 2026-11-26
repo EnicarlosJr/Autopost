@@ -9,7 +9,7 @@ from app.database.session import get_db
 from app.models.publication import Publication
 from app.models.search import GroupSchedule, Listing, Search
 from app.searches import service
-from app.searches.service import SEARCH_LEASE_MINUTES, as_utc, lines, now, search_url
+from app.searches.service import SEARCH_LEASE_MINUTES, as_utc, lines, now, pages_for
 
 router = APIRouter(prefix="/api/searches", tags=["searches"])
 
@@ -198,7 +198,7 @@ def due_search(db: Session = Depends(get_db)):
     search.next_run_at = now() + timedelta(minutes=SEARCH_LEASE_MINUTES)
     db.commit()
     return {"id": search.id, "name": search.name,
-            "terms": [{"term": term, "url": search_url(term)} for term in lines(search.terms)]}
+            "terms": [page for term in lines(search.terms) for page in pages_for(term)][:15]}
 
 @router.post("/{search_id}/results")
 def receive_results(search_id: int, data: Results, db: Session = Depends(get_db)):

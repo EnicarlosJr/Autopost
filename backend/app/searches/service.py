@@ -5,7 +5,7 @@ import re
 import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
-from urllib.parse import quote
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -48,6 +48,50 @@ def search_url(term: str) -> str:
     """Página de resultados do Mercado Livre para um termo."""
     slug = re.sub(r"\s+", "-", term.strip().lower())
     return f"https://lista.mercadolivre.com.br/{quote(slug, safe='-')}"
+
+
+# Ofertas do dia do Mercado Livre: várias ofertas boas numa página só, em várias páginas.
+OFFERS_URL = "https://www.mercadolivre.com.br/ofertas?container_id=MLB1599405-1"
+OFFERS_WORDS = {"ofertas do dia", "ofertas", "oferta do dia"}
+OFFERS_PAGES = 3
+ML_HOSTS = {"www.mercadolivre.com.br", "lista.mercadolivre.com.br", "mercadolivre.com.br"}
+
+
+def is_ml_url(text: str) -> bool:
+    """Endereço do Mercado Livre que a extensão pode abrir (nunca outro site)."""
+    try:
+        parts = urlsplit((text or "").strip())
+    except ValueError:
+        return False
+    return parts.scheme == "https" and parts.hostname in ML_HOSTS
+
+
+def is_offers(text: str) -> bool:
+    t = " ".join((text or "").strip().lower().split())
+    return t in OFFERS_WORDS or (is_ml_url(t) and urlsplit(t).path.rstrip("/") == "/ofertas")
+
+
+def offer_pages(url: str = OFFERS_URL, pages: int = OFFERS_PAGES) -> list[dict]:
+    """Páginas 1..N de uma página de ofertas do ML (sem o trecho depois de #)."""
+    parts = urlsplit(url if is_ml_url(url) else OFFERS_URL)
+    query = [(k, v) for k, v in parse_qsl(parts.query) if k != "page"]
+    out = []
+    for page in range(1, max(1, min(5, pages)) + 1):
+        q = urlencode(query + ([("page", str(page))] if page > 1 else []))
+        out.append({"term": f"ofertas do dia, página {page}",
+                    "url": urlunsplit(("https", parts.hostname, parts.path or "/ofertas", q, ""))})
+    return out
+
+
+def pages_for(term: str, pages: int = OFFERS_PAGES) -> list[dict]:
+    """O que a extensão lê para um termo: busca por palavra, página de ofertas (com paginação) ou um link do ML."""
+    term = (term or "").strip()
+    if is_offers(term):
+        return offer_pages(term if is_ml_url(term) else OFFERS_URL, pages)
+    if is_ml_url(term):
+        parts = urlsplit(term)
+        return [{"term": term[:160], "url": urlunsplit(("https", parts.hostname, parts.path, parts.query, ""))}]
+    return [{"term": term, "url": search_url(term)}]
 
 
 # ---------------------------------------------------------------- filtros e nota

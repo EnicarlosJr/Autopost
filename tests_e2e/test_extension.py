@@ -88,6 +88,7 @@ def test_search_reader_skips_ads_and_reads_cards(browser):
     page.close()
     first, second = data["items"]
     assert len(data["items"]) == 2 and not data["blocked"]
+    assert first.pop("catalog_product_id") == "MLB30144703"        # link com página de catálogo (/p/)
     assert first == {"external_id": "MLB4268042659", "url": "https://produto.mercadolivre.com.br/MLB-4268042659",
                      "title": "Parafusadeira 48v", "image_url": "https://http2.mlstatic.com/D_1.webp", "seller": "THE BLACK TOOLS",
                      "price": 132.9, "original_price": 259.9, "price_note": "no Pix", "rating": 4.8, "sold": 250000,
@@ -161,4 +162,40 @@ def test_search_reader_reads_embedded_payload_when_cards_are_not_rendered(browse
     assert first == {"external_id": "MLB7579993462", "url": "https://produto.mercadolivre.com.br/MLB-7579993462", "title": "Kettlebell 12kg",
                      "image_url": "https://http2.mlstatic.com/D_NQ_NP_655892-MLB1_092026-O.webp", "seller": "CROMMO",
                      "price": 158.98, "original_price": 199.9, "price_note": "no Pix", "rating": 4.9, "sold": 777,
-                     "free_shipping": True, "ml_category_id": "MLB999193", "official_store": True, "fulfillment": True}
+                     "free_shipping": True, "ml_category_id": "MLB999193", "official_store": True, "fulfillment": True,
+                     "catalog_product_id": "MLB1"}
+
+
+OFFERS = "https://www.mercadolivre.com.br/ofertas?container_id=MLB1599405-1"
+
+
+def _read_offers(browser, body):
+    ctx, worker = browser
+    ctx.route("https://www.mercadolivre.com.br/ofertas**", lambda r: r.fulfill(status=200, content_type=HTML, body=body))
+    page = ctx.new_page(); page.goto(OFFERS)
+    tab = _tab_id(worker, "https://www.mercadolivre.com.br/*")
+    data = worker.evaluate(f"chrome.scripting.executeScript({{target:{{tabId:{tab}}}, files:['search_reader.js']}}).then(r => r[0].result)")
+    page.close(); ctx.unroute("https://www.mercadolivre.com.br/ofertas**")
+    return data
+
+
+def test_offers_page_reads_cards_from_plain_json(browser):
+    # Ofertas do dia: os mesmos cartões "polycard", num JSON comum (sem o formato _n.ctx da busca).
+    raw = _payload_page().split('q(', 1)[1].rsplit(');', 1)[0]
+    state = json.loads(raw)[2:]
+    body = f'<html><body><div id="root"></div><script>window.__PRELOADED_STATE__ = {state};</script></body></html>'
+    data = _read_offers(browser, body)
+    assert data["source"] == "dados" and [i["external_id"] for i in data["items"]] == ["MLB7579993462", "MLB7912900396"]
+
+
+def test_offers_page_reads_promotion_item_cards(browser):
+    card = ('<li class="promotion-item"><a class="promotion-item__link-container" href="https://produto.mercadolivre.com.br/MLB-123456789-mochila-_JM">'
+            '<img src="https://http2.mlstatic.com/a.webp"><p class="promotion-item__title">Mochila Escolar</p>'
+            '<span class="andes-money-amount andes-money-amount--previous"><span class="andes-money-amount__fraction">200</span></span>'
+            '<span class="andes-money-amount"><span class="andes-money-amount__fraction">149</span><span class="andes-money-amount__cents">90</span></span>'
+            '<span class="promotion-item__shipping">Frete grátis</span></a></li>')
+    data = _read_offers(browser, f'<html><body><ol>{card}</ol></body></html>')
+    assert data["source"] == "ofertas"
+    assert data["items"][0] | {"image_url": ""} == {"external_id": "MLB123456789", "url": "https://produto.mercadolivre.com.br/MLB-123456789",
+        "title": "Mochila Escolar", "image_url": "", "seller": "", "price": 149.9, "original_price": 200, "price_note": "",
+        "rating": None, "sold": None, "free_shipping": True, "catalog_product_id": None}

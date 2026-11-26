@@ -25,7 +25,7 @@ const TRUST: Record<Exclude<Trust, 'custom'>, [string, string, Partial<SearchFil
     {min_sold: 500, min_rating: 4.5, official_or_full: true, exclude_suspicious: true}],
 };
 const EMPTY_FILTERS: SearchFilters = {min_price: null, max_price: null, min_discount: 0, min_rating: 4, free_shipping: false, allow_uncategorized: false,
-  gender: 'any', gender_strict: false, trust: 'basic', min_sold: 50, official_or_full: false, exclude_suspicious: true};
+  gender: 'any', gender_strict: false, trust: 'basic', min_sold: 50, official_or_full: false, exclude_suspicious: true, source: 'search', offers_pages: 3};
 const num = (v: string) => v.trim() === '' ? null : Number(v.replace(',', '.'));
 const when = (iso: string) => new Date(iso).toLocaleString('pt-BR', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
 
@@ -175,11 +175,33 @@ export default function CampaignSearchPanel({campaignId, defaults, niches = [], 
   const distinct = new Set(results.filter(r => r.matched).map(groupOf)).size;
   const toggleGroup = (key: number) => setOpen(o => o.includes(key) ? o.filter(x => x !== key) : [...o, key]);
   const active = history.find(s => s.id === current);
+  const offers = form.filters.source === 'offers';
 
   return <Stack gap={2.5}>
     {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
     {notice && <Alert severity="success" onClose={() => setNotice('')}>{notice}</Alert>}
     <Card variant="outlined" sx={{p: 2}}>
+      <Box mb={2.5} pb={2} sx={{borderBottom: `1px solid ${tokens.line}`}}>
+        <Typography fontWeight={650} mb={.75}>Onde buscar</Typography>
+        <ToggleButtonGroup exclusive size="small" value={offers ? 'offers' : 'search'} aria-label="Onde buscar"
+          onChange={(_, v: 'search' | 'offers' | null) => v && set({filters: {...form.filters, source: v}})}
+          sx={{'& .MuiToggleButton-root': {textTransform: 'none', px: 2}}}>
+          <ToggleButton value="search">Busca por palavras</ToggleButton>
+          <ToggleButton value="offers">Ofertas do dia do Mercado Livre</ToggleButton>
+        </ToggleButtonGroup>
+        <Typography variant="body2" color="text.secondary" mt={.75}>
+          {offers ? 'Lê as páginas de Ofertas do dia do ML (várias ofertas boas, já com desconto). As palavras e as categorias do nicho filtram o que aparece; sem palavras nem categorias, vale qualquer oferta que passe nos filtros.'
+            : 'Uma busca no Mercado Livre para cada palavra-chave (ou para o nome de cada categoria).'}
+        </Typography>
+        {offers && <Stack direction="row" alignItems="center" gap={1} mt={1}>
+          <Typography fontSize={14}>Páginas lidas:</Typography>
+          <ToggleButtonGroup exclusive size="small" value={form.filters.offers_pages ?? 3} aria-label="Páginas de ofertas"
+            onChange={(_, v: number | null) => v && set({filters: {...form.filters, offers_pages: v}})}>
+            {[1, 2, 3, 4, 5].map(n => <ToggleButton key={n} value={n} sx={{px: 1.5}}>{n}</ToggleButton>)}
+          </ToggleButtonGroup>
+          <Typography variant="caption" color="text.secondary">cerca de 50 ofertas por página</Typography>
+        </Stack>}
+      </Box>
       {niches.length > 0 && <Box mb={2.5} pb={2} sx={{borderBottom: `1px solid ${tokens.line}`}}>
         <Stack direction={{xs: 'column', sm: 'row'}} gap={1} justifyContent="space-between" alignItems={{sm: 'center'}} mb={1}>
           <Box>
@@ -208,8 +230,9 @@ export default function CampaignSearchPanel({campaignId, defaults, niches = [], 
       </Box>}
       <Typography fontWeight={650} mb={1.5}>Nova busca{form.niche_name ? ` (nicho ${form.niche_name})` : ''}</Typography>
       <Stack gap={2}>
-        <MultiPick label="Palavras-chave (uma busca no Mercado Livre para cada)" value={form.keywords} onChange={v => set({keywords: v.slice(0, 10)})} options={[]}
-          helper="Até 10. Sem palavras, o nome de cada categoria vira a palavra de busca."/>
+        <MultiPick label={offers ? 'Palavras que o título precisa ter (basta uma)' : 'Palavras-chave (uma busca no Mercado Livre para cada)'}
+          value={form.keywords} onChange={v => set({keywords: v.slice(0, 10)})} options={[]}
+          helper={offers ? 'Opcional. Vazio = todas as ofertas do dia que passarem nas categorias e nos filtros.' : 'Até 10. Sem palavras, o nome de cada categoria vira a palavra de busca.'}/>
         <Box>
           <Typography fontSize={14} fontWeight={600} mb={.75}>Confiabilidade</Typography>
           <ToggleButtonGroup exclusive size="small" value={form.filters.trust === 'custom' ? null : form.filters.trust} aria-label="Confiabilidade"
@@ -269,7 +292,7 @@ export default function CampaignSearchPanel({campaignId, defaults, niches = [], 
               label="Aceitar anúncios sem categoria identificada"/>
           </Stack></Collapse>
         </Box>
-        <Box><Button variant="contained" disabled={busy || (!form.keywords.length && !form.categories.length)} onClick={() => start({
+        <Box><Button variant="contained" disabled={busy || (!offers && !form.keywords.length && !form.categories.length)} onClick={() => start({
           niche_id: form.niche_id, categories: form.categories.map(c => ({id: c.id, include_children: c.include_children})), keywords: form.keywords,
           exclude_keywords: form.exclude_keywords, filters: form.filters})}>{busy ? 'Enviando…' : 'Buscar produtos'}</Button></Box>
       </Stack>

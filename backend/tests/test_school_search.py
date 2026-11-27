@@ -122,7 +122,7 @@ def test_mercado_pago_promo_is_explained_in_message_and_parents_page(env):
     option = service.page_data(client.get(f"/api/school-lists/{lid}").json())["items"][0]["options"][0]
     assert option["pay_kind"] == "mp" and option["pay_price"] == 44.99 and option["price"] == 54.99
     page = service.render_page(client.get(f"/api/school-lists/{lid}").json())
-    assert "Você tem saldo no Mercado Pago?" in page
+    assert "Você tem conta no Mercado Pago?" in page
 
 
 def test_turmas_can_be_renamed_and_removed(env):
@@ -132,3 +132,17 @@ def test_turmas_can_be_renamed_and_removed(env):
     r = client.put(f"/api/school-lists/{lid}", json=body).json()
     assert r["turmas"] == ["A", "Turma B"]
     assert client.put(f"/api/school-lists/{lid}", json={"grade": "1º ano", "turmas": ["Turma B"]}).json()["turmas"] == ["Turma B"]
+
+
+def test_mp_help_whatsapp_link_and_settings(env):
+    assert service.whatsapp_number("(11) 99999-0000") == "5511999990000"
+    assert service.whatsapp_number("123") == ""
+    link = service.whatsapp_link("11999990000", "", "Colégio CPCM", "1º ano")
+    assert link.startswith("https://wa.me/5511999990000?text=") and "Col%C3%A9gio%20CPCM" in link
+    client, _ = env
+    assert client.put("/api/school-lists/settings/mp-help", json={"whatsapp": "123"}).status_code == 422
+    r = client.put("/api/school-lists/settings/mp-help", json={"whatsapp": "(11) 99999-0000", "message": "Oi, sou da {escola}"}).json()
+    assert r["whatsapp"] == "5511999990000" and r["preview_url"].endswith("Oi%2C%20sou%20da%20Col%C3%A9gio%20Exemplo")
+    page = service.render_page({"school": "X", "grade": "1", "year": 2027, "items": []}, help_url=link)
+    assert "https://wa.me/5511999990000" in page and "Quero ajuda pelo WhatsApp" in page
+    assert "wa.me" not in service.render_page({"school": "X", "grade": "1", "year": 2027, "items": []}, help_url="https://evil.example")

@@ -454,10 +454,34 @@ def buy_link_from(option: dict) -> str:
     return option["affiliate_url"] if ok else option["original_url"]
 
 
+DEFAULT_MP_HELP_MESSAGE = ("Olá! Vi a lista de material da {escola} ({serie}) e quero ajuda para criar "
+                           "minha conta no Mercado Pago.")
+
+
+def whatsapp_number(text: str) -> str:
+    """Só os dígitos, com 55 na frente quando vier só DDD + número. Vazio se não parecer um celular do Brasil."""
+    digits = re.sub(r"\D", "", text or "")
+    if len(digits) in (10, 11):
+        digits = "55" + digits
+    return digits if len(digits) in (12, 13) and digits.startswith("55") else ""
+
+
+def whatsapp_link(number: str, message: str, school: str = "", grade: str = "") -> str:
+    """Link wa.me que abre o WhatsApp de quem clicou com a mensagem pronta para o seu número."""
+    phone = whatsapp_number(number)
+    if not phone:
+        return ""
+    text = (message or DEFAULT_MP_HELP_MESSAGE).replace("{escola}", school or "escola").replace("{serie}", grade or "série")
+    from urllib.parse import quote
+    return f"https://wa.me/{phone}?text={quote(text.strip()[:600])}"
+
+
 def render_page(detail: dict, disclosure: str = "#publi", checked_at: datetime | None = None,
-                greeting: str = "", switch_url: str = "") -> str:
+                greeting: str = "", switch_url: str = "", help_url: str = "") -> str:
     """Página única (HTML + CSS + JS, sem dependências) para publicar no seu site ou landing."""
     data = page_data(detail)
+    # Convite para quem não tem conta no Mercado Pago (só com WhatsApp configurado no painel).
+    data["help_url"] = help_url if help_url.startswith("https://wa.me/") else ""
     stamp = (checked_at or now()).astimezone(timezone(timedelta(hours=-3))).strftime("%d/%m/%Y às %H:%M")
     # JSON dentro de <script>: "</" quebrado para não fechar a tag antes da hora.
     payload = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
@@ -493,7 +517,7 @@ LANDING_TEMPLATE = """<!doctype html>
 <meta name="robots" content="noindex">
 <title>Material escolar · {{SCHOOL}}</title>
 <style>
-:root{--bg:#FBF8F1;--ink:#1C2340;--muted:#5F6478;--line:#ECE6D8;--line2:#D9D2C2;--navy:#24357A;--navy2:#1A275C;--sun:#FFC83D}
+:root{--bg:#FBF8F1;--ink:#1C2340;--muted:#5F6478;--line:#ECE6D8;--line2:#D9D2C2;--navy:#C62828;--navy2:#A31F1F;--sun:#FFC83D}
 *{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 .band{background:var(--navy);height:150px}
@@ -511,7 +535,7 @@ input[type=text],select{font:inherit;font-size:16px;min-height:50px;padding:10px
 input[type=text]:focus,select:focus{outline:3px solid var(--sun);outline-offset:1px;border-color:var(--navy)}
 .consent{flex-direction:row;align-items:flex-start;gap:10px;font-weight:400;font-size:13px;color:var(--muted);line-height:1.45}
 .consent input{width:22px;height:22px;margin:0;accent-color:var(--navy);flex:none}
-button{font:inherit;font-size:16px;font-weight:800;min-height:52px;border-radius:12px;border:0;background:var(--navy);color:#fff;cursor:pointer;box-shadow:0 4px 12px rgba(36,53,122,.25)}
+button{font:inherit;font-size:16px;font-weight:800;min-height:52px;border-radius:12px;border:0;background:var(--navy);color:#fff;cursor:pointer;box-shadow:0 4px 12px rgba(198,40,40,.25)}
 button:hover{background:var(--navy2)}button:focus-visible{outline:3px solid var(--sun);outline-offset:2px}
 .err{color:#B3261E;background:#FCEEEE;border-radius:10px;padding:10px 12px;margin:0;font-size:14px}
 @media (min-width:700px){.band{height:190px}main{margin-top:-150px}h1{font-size:32px}.card{padding:30px 30px 30px 50px}.card::before{left:30px}}
@@ -539,7 +563,7 @@ PAGE_TEMPLATE = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>{{TITLE}}</title>
 <style>
-:root{--bg:#FBF8F1;--ink:#1C2340;--muted:#5F6478;--line:#ECE6D8;--line2:#D9D2C2;--navy:#24357A;--navy2:#1A275C;--sky:#EEF2FF;--sun:#FFC83D;--sun2:#FFF3CC;--coral:#D9472F;--coral2:#FDE7E2;--mint:#1E8A5A;--mint2:#E3F4EA;--on:#C9D1F0;--shadow:0 1px 2px rgba(28,35,64,.06),0 6px 18px rgba(28,35,64,.05)}
+:root{--bg:#FBF8F1;--ink:#1C2340;--muted:#5F6478;--line:#ECE6D8;--line2:#D9D2C2;--navy:#C62828;--navy2:#A31F1F;--sky:#FDEEEE;--sun:#FFC83D;--sun2:#FFF3CC;--coral:#D9472F;--coral2:#FDE7E2;--mint:#1E8A5A;--mint2:#E3F4EA;--on:#FBD5D5;--shadow:0 1px 2px rgba(28,35,64,.06),0 6px 18px rgba(28,35,64,.05)}
 *{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding-bottom:92px}
 a{color:var(--navy)}button{font:inherit;color:inherit}
@@ -560,14 +584,14 @@ h1{display:inline;font-size:25px;line-height:1.3;margin:0;letter-spacing:-.015em
 .tabs:empty{display:none}
 .tab{text-align:left;padding:11px 12px;border-radius:12px;border:1px solid var(--line2);background:#fff;cursor:pointer;display:flex;justify-content:space-between;align-items:baseline;gap:6px;min-width:0}
 .tab span{font-weight:800;font-size:15px}.tab small{font-size:13px;color:var(--muted);white-space:nowrap;font-weight:600}.tab em{display:none;font-style:normal;font-weight:400}
-.tab[aria-selected=true]{background:var(--navy);border-color:var(--navy);color:#fff;box-shadow:0 4px 12px rgba(36,53,122,.25)}.tab[aria-selected=true] small{color:var(--sun)}
+.tab[aria-selected=true]{background:var(--navy);border-color:var(--navy);color:#fff;box-shadow:0 4px 12px rgba(198,40,40,.25)}.tab[aria-selected=true] small{color:var(--sun)}
 .layout{display:grid;gap:16px;padding:4px 0 24px}
 .list{display:flex;flex-direction:column;gap:12px;min-width:0}
 .card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:14px;display:grid;gap:12px;align-items:start;box-shadow:var(--shadow);
   grid-template-columns:72px minmax(0,1fr);grid-template-areas:"img info" "opts opts" "foot foot" "acts acts"}
 .card.done{border-color:#A9D9C0;box-shadow:inset 4px 0 0 var(--mint),var(--shadow)}
 .img{grid-area:img;width:72px;height:72px;border-radius:12px;border:1px solid var(--line);background:#fff;object-fit:contain}
-.ph{display:flex;align-items:center;justify-content:center;color:#8E9BD1;background:var(--sky);border-color:#DDE4FB}
+.ph{display:flex;align-items:center;justify-content:center;color:#D98C8C;background:var(--sky);border-color:#F6D3D3}
 .info{grid-area:info;min-width:0}
 .name{font-size:16px;font-weight:800;margin:0;line-height:1.3}
 .meta{margin:3px 0 0;font-size:13px;color:var(--muted)}
@@ -588,9 +612,11 @@ h1{display:inline;font-size:25px;line-height:1.3;margin:0;letter-spacing:-.015em
 .ask .seg button{min-height:44px;border-radius:12px;border:1px solid var(--line2);background:#fff;font-weight:700;cursor:pointer}
 .ask .seg button[aria-pressed=true]{background:var(--navy);border-color:var(--navy);color:#fff}
 .alt{font-size:12px;color:var(--muted)}
+.invite{border-top:1px dashed #E8C766;padding-top:10px;display:flex;flex-direction:column;gap:8px}.invite p{margin:0;font-size:14px}
+.wa{display:flex;align-items:center;justify-content:center;min-height:44px;border-radius:12px;background:#1E8A5A;color:#fff;font-weight:800;text-decoration:none}
 .each{font-size:12px;color:var(--muted)}.pay{font-size:12px;font-weight:700;color:var(--mint);background:var(--mint2);border-radius:6px;padding:1px 6px}.pct{background:var(--coral2);color:var(--coral);border-radius:6px;padding:1px 6px;font-weight:800}
 .acts{grid-area:acts;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
-.buy{grid-column:1/-1;display:flex;align-items:center;justify-content:center;gap:8px;min-height:48px;border-radius:12px;background:var(--navy);color:#fff;font-weight:800;text-decoration:none;box-shadow:0 3px 10px rgba(36,53,122,.22)}
+.buy{grid-column:1/-1;display:flex;align-items:center;justify-content:center;gap:8px;min-height:48px;border-radius:12px;background:var(--navy);color:#fff;font-weight:800;text-decoration:none;box-shadow:0 3px 10px rgba(198,40,40,.22)}
 .buy::after{content:"→";font-weight:700}.buy:hover{background:var(--navy2)}
 .tog{font-weight:700;font-size:14px;min-height:42px;border-radius:12px;border:1px solid var(--line2);background:#fff;cursor:pointer;padding:0 14px}
 .tog[aria-pressed=true]{background:var(--mint2);border-color:var(--mint);color:var(--mint)}
@@ -599,7 +625,7 @@ h1{display:inline;font-size:25px;line-height:1.3;margin:0;letter-spacing:-.015em
 .undo{grid-area:undo;display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;color:var(--muted);border-top:1px dashed var(--line2);padding-top:4px}
 .card.nop{grid-template-areas:"img info"}
 .empty{background:#fff;border:1px dashed var(--line2);border-radius:18px;padding:28px 20px;text-align:center;display:flex;flex-direction:column;gap:4px}
-.sum{background:var(--navy);color:#fff;border-radius:18px;padding:20px;display:flex;flex-direction:column;gap:14px;box-shadow:0 10px 28px rgba(36,53,122,.25)}
+.sum{background:var(--navy);color:#fff;border-radius:18px;padding:20px;display:flex;flex-direction:column;gap:14px;box-shadow:0 10px 28px rgba(198,40,40,.25)}
 .label{font-size:13px;color:var(--muted)}.sum .label{color:var(--on)}
 .total{font-size:36px;font-weight:800;line-height:1.05;letter-spacing:-.02em}
 .row{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:14px}
@@ -642,7 +668,7 @@ button:focus-visible,a:focus-visible{outline:3px solid var(--sun);outline-offset
 <div><div class="row"><span class="label">No carrinho</span><b id="cartLabel"></b></div><div class="bar"><i id="cartBar"></i></div></div>
 <div class="split" id="split"></div>
 <button class="btn2" onclick="window.print()">Imprimir ou salvar em PDF</button>
-<p class="small">Preços conferidos em {{STAMP}}. O total usa o preço no Pix quando há promoção no Pix, e o preço com saldo no Mercado Pago só se você disse que tem saldo. O preço e o estoque finais são os do Mercado Livre na hora da compra. O Mercado Livre não deixa colocar vários produtos no carrinho de uma vez: abra cada item e marque "Pus no carrinho".</p>
+<p class="small">Preços conferidos em {{STAMP}}. O total usa o preço no Pix quando há promoção no Pix, e o preço do Mercado Pago só se você disse que tem conta. O preço e o estoque finais são os do Mercado Livre na hora da compra. O Mercado Livre não deixa colocar vários produtos no carrinho de uma vez: abra cada item e marque "Pus no carrinho".</p>
 </div></aside></div>
 </main>
 <div class="mbar"><div class="in"><div><small id="mbLabel"></small><b id="mbTotal"></b></div>
@@ -655,23 +681,25 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&am
 let S = {};
 try { S = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { S = {}; }
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
-// Saldo no Mercado Pago: algumas promoções valem só para quem paga com saldo. A resposta fica neste navegador.
+// Conta no Mercado Pago: algumas promoções valem só para quem paga pelo Mercado Pago. A resposta fica neste navegador.
 let MP = '';
 try { MP = localStorage.getItem('orcamento:mercado-pago') || ''; } catch (e) { MP = ''; }
 const hasMpPromo = D.items.some(it => it.options.some(o => o.pay_kind === 'mp'));
-// Preço que esta pessoa paga: Pix vale para todos; saldo no Mercado Pago só se ela disse que tem.
+// Preço que esta pessoa paga: Pix vale para todos; a promoção do Mercado Pago só se ela disse que tem conta.
 const unit = o => (o.pay_kind === 'pix' || (o.pay_kind === 'mp' && MP === 'yes')) && o.pay_price ? o.pay_price : o.price;
 function payLine(o, qty) {
   if (!o.pay_price) return '';
   if (o.pay_kind === 'pix') return `<span class="pay">no Pix</span><span class="alt">${brl(o.price * qty)} no cartão</span>`;
-  if (o.pay_kind === 'mp' && MP === 'yes') return `<span class="pay">com saldo no Mercado Pago</span><span class="alt">sem saldo: ${brl(o.price * qty)}</span>`;
-  if (o.pay_kind === 'mp') return `<span class="alt">com saldo no Mercado Pago: ${brl(o.pay_price * qty)}</span>`;
+  if (o.pay_kind === 'mp' && MP === 'yes') return `<span class="pay">com conta no Mercado Pago</span><span class="alt">sem conta: ${brl(o.price * qty)}</span>`;
+  if (o.pay_kind === 'mp') return `<span class="alt">com conta no Mercado Pago: ${brl(o.pay_price * qty)}</span>`;
   return `<span class="alt">${brl(o.pay_price * qty)} ${esc(o.pay_note)}</span>`;
 }
 function askCard() {
   if (!hasMpPromo) return '';
-  return `<div class="ask"><p><b>Você tem saldo no Mercado Pago?</b> Algumas promoções desta lista valem só para quem paga com saldo no Mercado Pago. Sem saldo, mostramos o preço no Pix ou o normal.</p>
-    <div class="seg"><button data-mp="yes" aria-pressed="${MP === 'yes'}">Tenho saldo</button><button data-mp="no" aria-pressed="${MP === 'no'}">Não tenho</button></div></div>`;
+  const invite = MP === 'no' && D.help_url ? `<div class="invite"><p><b>Quer ter uma conta no Mercado Pago?</b> É grátis, e com ela você paga menos nas promoções marcadas. A gente te ajuda a criar.</p>
+    <a class="wa" href="${esc(D.help_url)}" target="_blank" rel="noopener">Quero ajuda pelo WhatsApp</a></div>` : '';
+  return `<div class="ask"><p><b>Você tem conta no Mercado Pago?</b> Algumas promoções desta lista valem só para quem paga pelo Mercado Pago. Sem conta, mostramos o preço no Pix ou o normal.</p>
+    <div class="seg"><button data-mp="yes" aria-pressed="${MP === 'yes'}">Tenho conta</button><button data-mp="no" aria-pressed="${MP === 'no'}">Não tenho</button></div>${invite}</div>`;
 }
 const st = i => {
   const it = D.items[i], s = S[i] || (S[i] = {inc: true, opt: it.default, qty: (it.options[it.default] || {qty: 1}).qty, cart: false});

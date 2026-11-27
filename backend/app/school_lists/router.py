@@ -136,6 +136,32 @@ def refresh_done(product_id: int, data: RefreshDone, db: Session = Depends(get_d
     service.finish_refresh(db, product_id, data.error.strip(), data.link_ok, data.unavailable)
     return {"ok": True}
 
+class MpHelp(BaseModel):
+    whatsapp: str = Field(default="", max_length=30)
+    message: str = Field(default="", max_length=600)
+
+@router.get("/settings/mp-help")
+def get_mp_help(db: Session = Depends(get_db), user: User = Depends(require_user)):
+    """WhatsApp e mensagem do convite para quem não tem conta no Mercado Pago (página dos pais)."""
+    rule = main_rule(db)
+    return {"whatsapp": rule.mp_help_whatsapp if rule else "", "message": (rule.mp_help_message if rule else "") or "",
+            "default_message": service.DEFAULT_MP_HELP_MESSAGE,
+            "preview_url": service.whatsapp_link(rule.mp_help_whatsapp if rule else "", rule.mp_help_message if rule else "",
+                                                 "Colégio Exemplo", "1º ano")}
+
+@router.put("/settings/mp-help")
+def save_mp_help(data: MpHelp, db: Session = Depends(get_db), user: User = Depends(require_user)):
+    number = data.whatsapp.strip()
+    if number and not service.whatsapp_number(number):
+        raise HTTPException(422, "Informe o WhatsApp com DDD, ex.: (11) 99999-0000.")
+    rule = main_rule(db)
+    if rule is None:
+        raise HTTPException(409, "Perfil não encontrado.")
+    rule.mp_help_whatsapp = service.whatsapp_number(number) if number else ""
+    rule.mp_help_message = data.message.strip()
+    db.commit()
+    return get_mp_help(db, user)
+
 @router.get("/{list_id}")
 def get_list(list_id: int, db: Session = Depends(get_db), user: User = Depends(require_user)):
     return service.list_detail(db, _list(db, user, list_id))

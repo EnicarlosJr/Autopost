@@ -83,6 +83,38 @@ function NewListDialog({open, onClose, onCreated}: {open: boolean; onClose: () =
   </Dialog>;
 }
 
+/** Convite da página dos pais para quem não tem conta no Mercado Pago: seu WhatsApp e a mensagem pronta. */
+function MpHelpCard() {
+  const [whatsapp, setWhatsapp] = useState(''), [message, setMessage] = useState(''), [fallback, setFallback] = useState('');
+  const [preview, setPreview] = useState(''), [busy, setBusy] = useState(false), [note, setNote] = useState(''), [error, setError] = useState('');
+  type Help = {whatsapp: string; message: string; default_message: string; preview_url: string};
+  const apply = (d: Help) => { setWhatsapp(d.whatsapp); setMessage(d.message); setFallback(d.default_message); setPreview(d.preview_url); };
+  useEffect(() => { api.get<Help>('/school-lists/settings/mp-help').then(r => apply(r.data)).catch(() => {}); }, []);
+  const save = async () => {
+    setBusy(true); setError(''); setNote('');
+    try { apply((await api.put<Help>('/school-lists/settings/mp-help', {whatsapp, message})).data); setNote('Salvo.'); }
+    catch (e) { setError(apiError(e, 'Não foi possível salvar.')); }
+    finally { setBusy(false); }
+  };
+  return <Card sx={{p: 2.5, mb: 2}}>
+    <Typography fontWeight={700}>Ajuda com o Mercado Pago (página dos pais)</Typography>
+    <Typography fontSize={13.5} color="text.secondary" mb={1.5}>Quem responder que não tem conta no Mercado Pago vê o convite "Quero ajuda pelo WhatsApp",
+      que abre o WhatsApp da pessoa com a mensagem pronta para o seu número. Sem número, o convite não aparece.</Typography>
+    {error && <Alert severity="error" sx={{mb: 1.5}}>{error}</Alert>}
+    <Stack direction={{xs: 'column', md: 'row'}} gap={1.5} alignItems={{md: 'flex-start'}}>
+      <TextField size="small" label="Seu WhatsApp (com DDD)" placeholder="(11) 99999-0000" value={whatsapp} onChange={e => setWhatsapp(e.target.value)} sx={{minWidth: 220}}/>
+      <TextField size="small" label="Mensagem que a pessoa vai enviar" multiline minRows={2} value={message} placeholder={fallback}
+        onChange={e => setMessage(e.target.value)} sx={{flex: 1}} inputProps={{maxLength: 600}}
+        helperText="Use {escola} e {serie} para o nome da escola e da série. Vazio = a mensagem padrão."/>
+      <Stack direction="row" gap={1}>
+        <Button variant="contained" disabled={busy} onClick={save}>Salvar</Button>
+        {preview && <Button component="a" href={preview} target="_blank" rel="noopener">Testar link</Button>}
+      </Stack>
+    </Stack>
+    {note && <Typography fontSize={13} color="success.main" mt={1}>{note}</Typography>}
+  </Card>;
+}
+
 export function SchoolListsPage() {
   const [lists, setLists] = useState<SchoolListSummary[]>([]), [loading, setLoading] = useState(true), [error, setError] = useState('');
   const [open, setOpen] = useState(false);
@@ -100,6 +132,7 @@ export function SchoolListsPage() {
         <Button variant="contained" onClick={() => setOpen(true)}>Nova lista</Button></>}/>
     <Feedback error={error} onRetry={load} onClose={() => setError('')}/>
     <Loading show={loading}/>
+    <MpHelpCard/>
     {!loading && !lists.length && <Empty text="Nenhuma lista ainda. Crie a primeira com a série e cole os itens da lista da escola."/>}
     <Stack gap={1.5}>
       {lists.map(l => <Card key={l.id} component={Link} to={`/school-lists/${l.id}`} sx={{p: 2.5, textDecoration: 'none', color: 'inherit', '&:hover': {borderColor: tokens.ink}}}>
@@ -177,7 +210,7 @@ function OptionCard({list, item, slot, option, onChange, onError, onNotice}: {li
       </Box>
     </Stack>
     <PaymentNote note={option.price_note} regular={option.regular_price}/>
-    {/mercado pago/i.test(option.price_note) && <Typography fontSize={12} color="text.secondary">Na página dos pais, cada um diz se tem saldo e vê o preço certo.</Typography>}
+    {/mercado pago/i.test(option.price_note) && <Typography fontSize={12} color="text.secondary">Na página dos pais, cada um diz se tem conta no Mercado Pago e vê o preço certo.</Typography>}
     {option.price_conditions && <Typography fontSize={12} color="text.secondary">Condições vistas no ML: {option.price_conditions}</Typography>}
     <Meta items={[option.store, ago(option.captured_at), option.price != null && option.buy_qty > 1 && `${option.buy_qty} × = ${brl((option.regular_price && option.regular_price > option.price ? option.regular_price : option.price) * option.buy_qty)}`]}/>
     <Stack direction="row" gap={.75} flexWrap="wrap">

@@ -102,3 +102,47 @@ def test_pix_price_is_a_note_and_unavailable_product_stays(env):
         assert db.get(Product, pid).availability == "indisponível"
     client.post(f"/api/products/{pid}/browser-data", json={"title": "Mochila", "price": 4300})
     assert not client.get(f"/api/school-lists/{lid}").json()["items"][0]["options"][0]["unavailable"]
+
+
+def test_mercado_pago_promo_is_explained_in_message_and_parents_page(env):
+    from app.publications.messages import standard_offer_text
+    product = Product(title="Óleo Elseve", price=26.51, original_price=64.19, price_note="com saldo no Mercado Pago",
+                      regular_price=33.14, affiliate_url="https://meli.la/x")
+    text = standard_offer_text(product)
+    assert "*R$ 26,51* com saldo no Mercado Pago (sem saldo: R$ 33,14)" in text
+    pix = Product(title="Moto", price=4435, original_price=7999.9, price_note="no Pix", regular_price=4580, affiliate_url="https://meli.la/y")
+    assert "no Pix (44% OFF)" in standard_offer_text(pix) and "sem saldo" not in standard_offer_text(pix)
+    # Página dos pais: cada opção diz o tipo de promoção; a página pergunta se a pessoa tem saldo.
+    client, Session = env
+    lid = client.post("/api/school-lists", json={"school": "CPCM", "grade": "1º ano"}).json()["id"]
+    item = client.post(f"/api/school-lists/{lid}/items", json={"name": "Mochila"}).json()["items"][0]
+    pid = client.put(f"/api/school-lists/items/{item['id']}/options/0", json={"url": "https://www.mercadolivre.com.br/m/p/MLB8"}).json()["product_id"]
+    client.post(f"/api/products/{pid}/browser-data", json={"title": "Mochila", "price": 44.99, "price_note": "com saldo no Mercado Pago",
+                                                           "regular_price": 54.99})
+    option = service.page_data(client.get(f"/api/school-lists/{lid}").json())["items"][0]["options"][0]
+    assert option["pay_kind"] == "mp" and option["pay_price"] == 44.99 and option["price"] == 54.99
+    page = service.render_page(client.get(f"/api/school-lists/{lid}").json())
+    assert "Você tem conta no Mercado Pago?" in page
+
+
+def test_turmas_can_be_renamed_and_removed(env):
+    client, _ = env
+    lid = client.post("/api/school-lists", json={"grade": "1º ano", "turmas": ["A", "A ", "a", "B"]}).json()["id"]
+    body = {"grade": "1º ano", "turmas": ["A", "Turma B"]}
+    r = client.put(f"/api/school-lists/{lid}", json=body).json()
+    assert r["turmas"] == ["A", "Turma B"]
+    assert client.put(f"/api/school-lists/{lid}", json={"grade": "1º ano", "turmas": ["Turma B"]}).json()["turmas"] == ["Turma B"]
+
+
+def test_mp_help_whatsapp_link_and_settings(env):
+    assert service.whatsapp_number("(11) 99999-0000") == "5511999990000"
+    assert service.whatsapp_number("123") == ""
+    link = service.whatsapp_link("11999990000", "", "Colégio CPCM", "1º ano")
+    assert link.startswith("https://wa.me/5511999990000?text=") and "Col%C3%A9gio%20CPCM" in link
+    client, _ = env
+    assert client.put("/api/school-lists/settings/mp-help", json={"whatsapp": "123"}).status_code == 422
+    r = client.put("/api/school-lists/settings/mp-help", json={"whatsapp": "(11) 99999-0000", "message": "Oi, sou da {escola}"}).json()
+    assert r["whatsapp"] == "5511999990000" and r["preview_url"].endswith("Oi%2C%20sou%20da%20Col%C3%A9gio%20Exemplo")
+    page = service.render_page({"school": "X", "grade": "1", "year": 2027, "items": []}, help_url=link)
+    assert "https://wa.me/5511999990000" in page and "Quero ajuda pelo WhatsApp" in page
+    assert "wa.me" not in service.render_page({"school": "X", "grade": "1", "year": 2027, "items": []}, help_url="https://evil.example")

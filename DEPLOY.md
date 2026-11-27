@@ -112,29 +112,33 @@ Na primeira vez o Caddy pede os certificados HTTPS (leva até 1 minuto). Confira
 
 Para voltar a testar no computador, apague o campo e salve: a extensão volta a usar o painel local (`localhost:5173`).
 
-## 5. Levar os dados do computador para o servidor (opcional, antes do passo 3)
+## 5. Levar os dados do computador para o servidor
 
-No seu computador (na `develop`, com o Docker rodando), exporte o banco:
+Pode ser feito antes ou depois da primeira subida. **Substitui** os dados do servidor pelos do seu computador (o script salva uma cópia do banco do servidor em `backups/` antes).
 
-```bash
-docker compose exec -T db pg_dump -U autopost autopost > autopost.sql
-```
-
-Envie o arquivo para o servidor (ex.: `scp autopost.sql usuario@IP:~/autopost/`). Faça a importação **antes do passo 3** (antes da API subir pela primeira vez e criar um banco vazio). Suba só o banco:
+No seu computador, na pasta do projeto e com o Docker rodando, exporte o banco num arquivo binário (não use `>` no PowerShell: ele grava o arquivo num formato que o banco não lê):
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.production up -d db
+docker compose exec -T db pg_dump -U autopost -Fc autopost -f /tmp/autopost.dump
 ```
-
-Importe:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.production exec -T db psql -U autopost autopost < autopost.sql
+docker compose cp db:/tmp/autopost.dump autopost.dump
 ```
 
-Depois siga o passo 3 (`sh deploy/deploy.sh`). O login continua o do seu computador.
+Envie o arquivo para o servidor (troque o IP):
 
-As fotos dos produtos são baixadas de novo quando precisar.
+```bash
+scp autopost.dump root@IP-DO-SERVIDOR:~/autopost/
+```
+
+No servidor, dentro da pasta `autopost`:
+
+```bash
+sh deploy/importar-banco.sh autopost.dump
+```
+
+Ele pede para digitar `SUBSTITUIR`, salva a cópia do banco atual, importa e sobe tudo de novo (as migrações rodam sozinhas). O login do painel passa a ser o do seu computador. As fotos dos produtos são baixadas de novo quando precisar.
 
 ## 6. Backups
 

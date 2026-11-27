@@ -126,6 +126,9 @@ def list_page(school: str, grade: str, request: Request, db: Session = Depends(g
     captured = [o["captured_at"] for i in detail["items"] for o in i["options"] if o["captured_at"]]
     from datetime import datetime
     oldest = datetime.fromisoformat(min(captured)) if captured else None
+    rule = main_rule(db)
+    help_url = service.whatsapp_link(getattr(rule, "mp_help_whatsapp", "") if rule else "",
+                                     getattr(rule, "mp_help_message", "") if rule else "", row.school, row.grade)
     body = service.render_page(detail, _disclosure(db), oldest, greeting=f"Lista de {visitor.student_name} · {visitor.turma}",
-                               switch_url=f"/escolas/{school}?trocar=1")
+                               switch_url=f"/escolas/{school}?trocar=1", help_url=help_url)
     return HTMLResponse(body, headers={"Cache-Control": "no-store"})

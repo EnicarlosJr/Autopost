@@ -99,6 +99,11 @@ def effective_price(option: dict) -> float | None:
     return regular if regular and regular > price else price
 
 
+def payment_kind(note: str) -> str:
+    text = (note or "").lower()
+    return "mp" if "mercado pago" in text else ("pix" if "pix" in text else "other")
+
+
 def condition_label(option: dict) -> str:
     """Condição do preço menor ("no Pix", "com Mercado Pago"), quando ele é diferente do preço normal."""
     if effective_price(option) == option.get("price"):
@@ -325,7 +330,8 @@ def next_search(db: Session, owner_id: int) -> tuple[SchoolItemSearch, list[dict
 def _snapshot(listing: Listing) -> dict:
     return {"listing_id": listing.id, "external_id": listing.external_id, "url": normalize_product_url(listing.url),
             "link": listing.url, "title": listing.title, "price": listing.price, "original_price": listing.original_price,
-            "price_note": listing.price_note or "", "image_url": listing.image_url, "seller": listing.seller,
+            "price_note": listing.price_note or "", "regular_price": listing.regular_price,
+            "image_url": listing.image_url, "seller": listing.seller,
             "rating": listing.rating, "sold": listing.sold, "official_store": bool(listing.official_store),
             "fulfillment": bool(listing.fulfillment), "free_shipping": bool(listing.free_shipping),
             "catalog_product_id": listing.catalog_product_id}
@@ -433,6 +439,8 @@ def page_data(detail: dict) -> dict:
         options = [{"label": o["label"], "title": o["title"], "price": effective_price(o),
                     "original_price": o["original_price"] if (o["original_price"] or 0) > (effective_price(o) or 0) else None,
                     "pay_price": o["price"] if condition_label(o) else None, "pay_note": condition_label(o),
+                    # "mp": só com saldo no Mercado Pago (a página pergunta); "pix": vale para todos que pagam no Pix.
+                    "pay_kind": payment_kind(condition_label(o)) if condition_label(o) else "",
                     "qty": o["buy_qty"], "image": o["image_source_url"], "url": buy_link_from(o)}
                    for o in item["options"] if o["price"] is not None and not o.get("unavailable")]
         # Item sem opção com preço também aparece (fora do total), para a lista não ficar incompleta.
@@ -446,10 +454,34 @@ def buy_link_from(option: dict) -> str:
     return option["affiliate_url"] if ok else option["original_url"]
 
 
+DEFAULT_MP_HELP_MESSAGE = ("Olá! Vi a lista de material da {escola} ({serie}) e quero ajuda para criar "
+                           "minha conta no Mercado Pago.")
+
+
+def whatsapp_number(text: str) -> str:
+    """Só os dígitos, com 55 na frente quando vier só DDD + número. Vazio se não parecer um celular do Brasil."""
+    digits = re.sub(r"\D", "", text or "")
+    if len(digits) in (10, 11):
+        digits = "55" + digits
+    return digits if len(digits) in (12, 13) and digits.startswith("55") else ""
+
+
+def whatsapp_link(number: str, message: str, school: str = "", grade: str = "") -> str:
+    """Link wa.me que abre o WhatsApp de quem clicou com a mensagem pronta para o seu número."""
+    phone = whatsapp_number(number)
+    if not phone:
+        return ""
+    text = (message or DEFAULT_MP_HELP_MESSAGE).replace("{escola}", school or "escola").replace("{serie}", grade or "série")
+    from urllib.parse import quote
+    return f"https://wa.me/{phone}?text={quote(text.strip()[:600])}"
+
+
 def render_page(detail: dict, disclosure: str = "#publi", checked_at: datetime | None = None,
-                greeting: str = "", switch_url: str = "") -> str:
+                greeting: str = "", switch_url: str = "", help_url: str = "") -> str:
     """Página única (HTML + CSS + JS, sem dependências) para publicar no seu site ou landing."""
     data = page_data(detail)
+    # Convite para quem não tem conta no Mercado Pago (só com WhatsApp configurado no painel).
+    data["help_url"] = help_url if help_url.startswith("https://wa.me/") else ""
     stamp = (checked_at or now()).astimezone(timezone(timedelta(hours=-3))).strftime("%d/%m/%Y às %H:%M")
     # JSON dentro de <script>: "</" quebrado para não fechar a tag antes da hora.
     payload = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
@@ -485,7 +517,7 @@ LANDING_TEMPLATE = """<!doctype html>
 <meta name="robots" content="noindex">
 <title>Material escolar · {{SCHOOL}}</title>
 <style>
-:root{--bg:#FBF8F1;--ink:#1C2340;--muted:#5F6478;--line:#ECE6D8;--line2:#D9D2C2;--navy:#24357A;--navy2:#1A275C;--sun:#FFC83D}
+:root{--bg:#FBF8F1;--ink:#1C2340;--muted:#5F6478;--line:#ECE6D8;--line2:#D9D2C2;--navy:#C62828;--navy2:#A31F1F;--sun:#FFC83D}
 *{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 .band{background:var(--navy);height:150px}
@@ -503,7 +535,7 @@ input[type=text],select{font:inherit;font-size:16px;min-height:50px;padding:10px
 input[type=text]:focus,select:focus{outline:3px solid var(--sun);outline-offset:1px;border-color:var(--navy)}
 .consent{flex-direction:row;align-items:flex-start;gap:10px;font-weight:400;font-size:13px;color:var(--muted);line-height:1.45}
 .consent input{width:22px;height:22px;margin:0;accent-color:var(--navy);flex:none}
-button{font:inherit;font-size:16px;font-weight:800;min-height:52px;border-radius:12px;border:0;background:var(--navy);color:#fff;cursor:pointer;box-shadow:0 4px 12px rgba(36,53,122,.25)}
+button{font:inherit;font-size:16px;font-weight:800;min-height:52px;border-radius:12px;border:0;background:var(--navy);color:#fff;cursor:pointer;box-shadow:0 4px 12px rgba(198,40,40,.25)}
 button:hover{background:var(--navy2)}button:focus-visible{outline:3px solid var(--sun);outline-offset:2px}
 .err{color:#B3261E;background:#FCEEEE;border-radius:10px;padding:10px 12px;margin:0;font-size:14px}
 @media (min-width:700px){.band{height:190px}main{margin-top:-150px}h1{font-size:32px}.card{padding:30px 30px 30px 50px}.card::before{left:30px}}
@@ -531,7 +563,7 @@ PAGE_TEMPLATE = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>{{TITLE}}</title>
 <style>
-:root{--bg:#FBF8F1;--ink:#1C2340;--muted:#5F6478;--line:#ECE6D8;--line2:#D9D2C2;--navy:#24357A;--navy2:#1A275C;--sky:#EEF2FF;--sun:#FFC83D;--sun2:#FFF3CC;--coral:#D9472F;--coral2:#FDE7E2;--mint:#1E8A5A;--mint2:#E3F4EA;--on:#C9D1F0;--shadow:0 1px 2px rgba(28,35,64,.06),0 6px 18px rgba(28,35,64,.05)}
+:root{--bg:#FBF8F1;--ink:#1C2340;--muted:#5F6478;--line:#ECE6D8;--line2:#D9D2C2;--navy:#C62828;--navy2:#A31F1F;--sky:#FDEEEE;--sun:#FFC83D;--sun2:#FFF3CC;--coral:#D9472F;--coral2:#FDE7E2;--mint:#1E8A5A;--mint2:#E3F4EA;--on:#FBD5D5;--shadow:0 1px 2px rgba(28,35,64,.06),0 6px 18px rgba(28,35,64,.05)}
 *{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding-bottom:92px}
 a{color:var(--navy)}button{font:inherit;color:inherit}
@@ -552,14 +584,14 @@ h1{display:inline;font-size:25px;line-height:1.3;margin:0;letter-spacing:-.015em
 .tabs:empty{display:none}
 .tab{text-align:left;padding:11px 12px;border-radius:12px;border:1px solid var(--line2);background:#fff;cursor:pointer;display:flex;justify-content:space-between;align-items:baseline;gap:6px;min-width:0}
 .tab span{font-weight:800;font-size:15px}.tab small{font-size:13px;color:var(--muted);white-space:nowrap;font-weight:600}.tab em{display:none;font-style:normal;font-weight:400}
-.tab[aria-selected=true]{background:var(--navy);border-color:var(--navy);color:#fff;box-shadow:0 4px 12px rgba(36,53,122,.25)}.tab[aria-selected=true] small{color:var(--sun)}
+.tab[aria-selected=true]{background:var(--navy);border-color:var(--navy);color:#fff;box-shadow:0 4px 12px rgba(198,40,40,.25)}.tab[aria-selected=true] small{color:var(--sun)}
 .layout{display:grid;gap:16px;padding:4px 0 24px}
 .list{display:flex;flex-direction:column;gap:12px;min-width:0}
 .card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:14px;display:grid;gap:12px;align-items:start;box-shadow:var(--shadow);
   grid-template-columns:72px minmax(0,1fr);grid-template-areas:"img info" "opts opts" "foot foot" "acts acts"}
 .card.done{border-color:#A9D9C0;box-shadow:inset 4px 0 0 var(--mint),var(--shadow)}
 .img{grid-area:img;width:72px;height:72px;border-radius:12px;border:1px solid var(--line);background:#fff;object-fit:contain}
-.ph{display:flex;align-items:center;justify-content:center;color:#8E9BD1;background:var(--sky);border-color:#DDE4FB}
+.ph{display:flex;align-items:center;justify-content:center;color:#D98C8C;background:var(--sky);border-color:#F6D3D3}
 .info{grid-area:info;min-width:0}
 .name{font-size:16px;font-weight:800;margin:0;line-height:1.3}
 .meta{margin:3px 0 0;font-size:13px;color:var(--muted)}
@@ -575,9 +607,16 @@ h1{display:inline;font-size:25px;line-height:1.3;margin:0;letter-spacing:-.015em
 .qty span{min-width:24px;text-align:center;font-weight:800}
 .price{display:flex;flex-direction:column;align-items:flex-end;text-align:right;gap:2px}
 .price b{font-size:21px;line-height:1.15;letter-spacing:-.01em}.was{font-size:12px;color:var(--muted)}.was s{margin-left:6px}
+.ask{background:var(--sun2);border:1px solid #F3DC8B;border-radius:18px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.ask p{margin:0;font-size:14px}.ask .seg{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.ask .seg button{min-height:44px;border-radius:12px;border:1px solid var(--line2);background:#fff;font-weight:700;cursor:pointer}
+.ask .seg button[aria-pressed=true]{background:var(--navy);border-color:var(--navy);color:#fff}
+.alt{font-size:12px;color:var(--muted)}
+.invite{border-top:1px dashed #E8C766;padding-top:10px;display:flex;flex-direction:column;gap:8px}.invite p{margin:0;font-size:14px}
+.wa{display:flex;align-items:center;justify-content:center;min-height:44px;border-radius:12px;background:#1E8A5A;color:#fff;font-weight:800;text-decoration:none}
 .each{font-size:12px;color:var(--muted)}.pay{font-size:12px;font-weight:700;color:var(--mint);background:var(--mint2);border-radius:6px;padding:1px 6px}.pct{background:var(--coral2);color:var(--coral);border-radius:6px;padding:1px 6px;font-weight:800}
 .acts{grid-area:acts;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
-.buy{grid-column:1/-1;display:flex;align-items:center;justify-content:center;gap:8px;min-height:48px;border-radius:12px;background:var(--navy);color:#fff;font-weight:800;text-decoration:none;box-shadow:0 3px 10px rgba(36,53,122,.22)}
+.buy{grid-column:1/-1;display:flex;align-items:center;justify-content:center;gap:8px;min-height:48px;border-radius:12px;background:var(--navy);color:#fff;font-weight:800;text-decoration:none;box-shadow:0 3px 10px rgba(198,40,40,.22)}
 .buy::after{content:"→";font-weight:700}.buy:hover{background:var(--navy2)}
 .tog{font-weight:700;font-size:14px;min-height:42px;border-radius:12px;border:1px solid var(--line2);background:#fff;cursor:pointer;padding:0 14px}
 .tog[aria-pressed=true]{background:var(--mint2);border-color:var(--mint);color:var(--mint)}
@@ -586,7 +625,7 @@ h1{display:inline;font-size:25px;line-height:1.3;margin:0;letter-spacing:-.015em
 .undo{grid-area:undo;display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;color:var(--muted);border-top:1px dashed var(--line2);padding-top:4px}
 .card.nop{grid-template-areas:"img info"}
 .empty{background:#fff;border:1px dashed var(--line2);border-radius:18px;padding:28px 20px;text-align:center;display:flex;flex-direction:column;gap:4px}
-.sum{background:var(--navy);color:#fff;border-radius:18px;padding:20px;display:flex;flex-direction:column;gap:14px;box-shadow:0 10px 28px rgba(36,53,122,.25)}
+.sum{background:var(--navy);color:#fff;border-radius:18px;padding:20px;display:flex;flex-direction:column;gap:14px;box-shadow:0 10px 28px rgba(198,40,40,.25)}
 .label{font-size:13px;color:var(--muted)}.sum .label{color:var(--on)}
 .total{font-size:36px;font-weight:800;line-height:1.05;letter-spacing:-.02em}
 .row{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:14px}
@@ -629,7 +668,7 @@ button:focus-visible,a:focus-visible{outline:3px solid var(--sun);outline-offset
 <div><div class="row"><span class="label">No carrinho</span><b id="cartLabel"></b></div><div class="bar"><i id="cartBar"></i></div></div>
 <div class="split" id="split"></div>
 <button class="btn2" onclick="window.print()">Imprimir ou salvar em PDF</button>
-<p class="small">Preços conferidos em {{STAMP}}. O total usa o preço no cartão; descontos no Pix ou com Mercado Pago aparecem em verde em cada item. O preço e o estoque finais são os do Mercado Livre na hora da compra. O Mercado Livre não deixa colocar vários produtos no carrinho de uma vez: abra cada item e marque "Pus no carrinho".</p>
+<p class="small">Preços conferidos em {{STAMP}}. O total usa o preço no Pix quando há promoção no Pix, e o preço do Mercado Pago só se você disse que tem conta. O preço e o estoque finais são os do Mercado Livre na hora da compra. O Mercado Livre não deixa colocar vários produtos no carrinho de uma vez: abra cada item e marque "Pus no carrinho".</p>
 </div></aside></div>
 </main>
 <div class="mbar"><div class="in"><div><small id="mbLabel"></small><b id="mbTotal"></b></div>
@@ -642,6 +681,26 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&am
 let S = {};
 try { S = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { S = {}; }
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
+// Conta no Mercado Pago: algumas promoções valem só para quem paga pelo Mercado Pago. A resposta fica neste navegador.
+let MP = '';
+try { MP = localStorage.getItem('orcamento:mercado-pago') || ''; } catch (e) { MP = ''; }
+const hasMpPromo = D.items.some(it => it.options.some(o => o.pay_kind === 'mp'));
+// Preço que esta pessoa paga: Pix vale para todos; a promoção do Mercado Pago só se ela disse que tem conta.
+const unit = o => (o.pay_kind === 'pix' || (o.pay_kind === 'mp' && MP === 'yes')) && o.pay_price ? o.pay_price : o.price;
+function payLine(o, qty) {
+  if (!o.pay_price) return '';
+  if (o.pay_kind === 'pix') return `<span class="pay">no Pix</span><span class="alt">${brl(o.price * qty)} no cartão</span>`;
+  if (o.pay_kind === 'mp' && MP === 'yes') return `<span class="pay">com conta no Mercado Pago</span><span class="alt">sem conta: ${brl(o.price * qty)}</span>`;
+  if (o.pay_kind === 'mp') return `<span class="alt">com conta no Mercado Pago: ${brl(o.pay_price * qty)}</span>`;
+  return `<span class="alt">${brl(o.pay_price * qty)} ${esc(o.pay_note)}</span>`;
+}
+function askCard() {
+  if (!hasMpPromo) return '';
+  const invite = MP === 'no' && D.help_url ? `<div class="invite"><p><b>Quer ter uma conta no Mercado Pago?</b> É grátis, e com ela você paga menos nas promoções marcadas. A gente te ajuda a criar.</p>
+    <a class="wa" href="${esc(D.help_url)}" target="_blank" rel="noopener">Quero ajuda pelo WhatsApp</a></div>` : '';
+  return `<div class="ask"><p><b>Você tem conta no Mercado Pago?</b> Algumas promoções desta lista valem só para quem paga pelo Mercado Pago. Sem conta, mostramos o preço no Pix ou o normal.</p>
+    <div class="seg"><button data-mp="yes" aria-pressed="${MP === 'yes'}">Tenho conta</button><button data-mp="no" aria-pressed="${MP === 'no'}">Não tenho</button></div>${invite}</div>`;
+}
 const st = i => {
   const it = D.items[i], s = S[i] || (S[i] = {inc: true, opt: it.default, qty: (it.options[it.default] || {qty: 1}).qty, cart: false});
   if (!it.options[s.opt]) s.opt = 0;
@@ -660,7 +719,7 @@ function sum(section) {
     if (!it.options.length) return;
     r.priced++;
     const s = st(i);
-    if (s.inc) { r.total += it.options[s.opt].price * s.qty; r.n++; if (s.cart) r.c++; }
+    if (s.inc) { r.total += unit(it.options[s.opt]) * s.qty; r.n++; if (s.cart) r.c++; }
   });
   return r;
 }
@@ -672,13 +731,14 @@ function card(it, i) {
   const img = o.image ? `<img class="img" src="${esc(o.image)}" alt="" referrerpolicy="no-referrer" loading="lazy">` : `<span class="img ph">${PH}</span>`;
   const info = head(`<p class="prod">${esc(o.title)}</p>`);
   if (!s.inc) return `<article class="card off">${img}${info}<div class="undo"><span>Você já tem este item.</span><button class="link" data-i="${i}" data-act="have">Desfazer</button></div></article>`;
-  const pct = o.original_price && o.original_price > o.price ? Math.round((1 - o.price / o.original_price) * 100) : 0;
+  const price = unit(o);
+  const pct = o.original_price && o.original_price > price ? Math.round((1 - price / o.original_price) * 100) : 0;
   const opts = it.options.length > 1 ? `<div class="opts" role="group" aria-label="Opções">${it.options.map((x, j) =>
-    `<button class="opt" aria-pressed="${j === s.opt}" data-i="${i}" data-opt="${j}"><span>${esc(x.label || 'Opção ' + (j + 1))}</span><b>${brl(x.price)}</b></button>`).join('')}</div>` : '';
-  const each = s.qty > 1 ? brl(o.price) + ' cada' : '';
+    `<button class="opt" aria-pressed="${j === s.opt}" data-i="${i}" data-opt="${j}"><span>${esc(x.label || 'Opção ' + (j + 1))}</span><b>${brl(unit(x))}</b></button>`).join('')}</div>` : '';
+  const each = s.qty > 1 ? brl(price) + ' cada' : '';
   return `<article class="card${s.cart ? ' done' : ''}">${img}${info}${opts}
     <div class="foot"><div class="qty"><button data-i="${i}" data-act="minus" aria-label="Diminuir quantidade">−</button><span>${s.qty}</span><button data-i="${i}" data-act="plus" aria-label="Aumentar quantidade">+</button></div>
-    <div class="price">${pct >= 5 ? `<span class="was"><span class="pct">-${pct}%</span><s>${brl(o.original_price * s.qty)}</s></span>` : ''}<b>${brl(o.price * s.qty)}</b>${o.pay_price ? `<span class="pay">${brl(o.pay_price * s.qty)} ${esc(o.pay_note)}</span>` : ''}${each ? `<span class="each">${each}</span>` : ''}</div></div>
+    <div class="price">${pct >= 5 ? `<span class="was"><span class="pct">-${pct}%</span><s>${brl(o.original_price * s.qty)}</s></span>` : ''}<b>${brl(price * s.qty)}</b>${payLine(o, s.qty)}${each ? `<span class="each">${each}</span>` : ''}</div></div>
     <div class="acts"><a class="buy" href="${esc(o.url)}" target="_blank" rel="noopener sponsored">Comprar no Mercado Livre</a>
     <button class="tog" data-i="${i}" data-act="cart" aria-pressed="${s.cart}">${s.cart ? '✓ No carrinho' : 'Pus no carrinho'}</button>
     <button class="link" data-i="${i}" data-act="have">Já tenho</button></div></article>`;
@@ -687,7 +747,8 @@ function render() {
   const sums = Object.fromEntries(sections.map(s => [s, sum(s)]));
   document.getElementById('tabs').innerHTML = sections.length < 2 ? '' : sections.map(s =>
     `<button class="tab" role="tab" aria-selected="${s === tab}" data-tab="${s}"><span>${esc(nameOf(s))}</span><small><em>${esc((LABEL[s] || ['', ''])[1])} · </em>${brl(sums[s].total)}</small></button>`).join('');
-  document.getElementById('list').innerHTML = D.items.map((it, i) => it.section === tab ? card(it, i) : '').join('')
+  const cards = D.items.map((it, i) => it.section === tab ? card(it, i) : '').join('');
+  document.getElementById('list').innerHTML = cards ? askCard() + cards : ''
     || '<div class="empty"><b>A lista ainda está sendo preparada.</b><span class="label">Os preços estão sendo conferidos. Volte daqui a pouco.</span></div>';
   const t = sums[tab] || {total: 0, n: 0, c: 0, priced: 0, all: 0};
   const label = ['Seu orçamento', nameOf(tab)].filter(Boolean).join(' · ');
@@ -707,8 +768,9 @@ function render() {
     + `<div class="row all"><span>Total da série</span><span>${brl(all)}</span></div>`;
 }
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-tab],[data-opt],[data-act]');
+  const t = e.target.closest('[data-tab],[data-opt],[data-act],[data-mp]');
   if (!t) return;
+  if (t.dataset.mp) { MP = t.dataset.mp; try { localStorage.setItem('orcamento:mercado-pago', MP); } catch (e) {} render(); return; }
   if (t.dataset.tab) { tab = t.dataset.tab; render(); window.scrollTo({top: document.getElementById('tabs').offsetTop - 4}); return; }
   const i = Number(t.dataset.i), s = st(i), act = t.dataset.act;
   if (t.dataset.opt) { s.opt = Number(t.dataset.opt); s.qty = D.items[i].options[s.opt].qty; }

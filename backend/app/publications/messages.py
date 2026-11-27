@@ -25,7 +25,9 @@ LINE_VARIABLES = {
 }
 # Variáveis opcionais: viram texto vazio quando não há dado, sem apagar a linha.
 INLINE_VARIABLES = {
-    "condicao": 'Condição do preço com espaço antes, por exemplo " no Pix"',
+    "condicao": 'Condição do preço com espaço antes, por exemplo " no Pix". Promoção com saldo no Mercado Pago '
+                'já explica o preço de quem não tem saldo: " com saldo no Mercado Pago (sem saldo: R$ 33,14)"',
+    "preco_sem_mp": 'Preço para quem não tem saldo no Mercado Pago (vazio quando a promoção não depende disso)',
     "desconto": 'Desconto com espaço antes, por exemplo " (44% OFF)"',
     "desconto_pct": 'Só o número do desconto, por exemplo "44"',
 }
@@ -45,6 +47,11 @@ def discount_percent(price: float | None, original_price: float | None) -> int |
     return int((original_price - price) / original_price * 100)
 
 
+def is_mercado_pago(note: str | None) -> bool:
+    """A condição do preço é ter saldo no Mercado Pago (promoção que nem todo comprador tem)."""
+    return "mercado pago" in (note or "").lower()
+
+
 def unknown_variables(template: str) -> list[str]:
     return sorted({name for name in _PLACEHOLDER.findall(template) if name not in VARIABLES})
 
@@ -53,6 +60,12 @@ def _values(product: Product) -> dict[str, str]:
     price, original = product.price, product.original_price
     discount = discount_percent(price, original)
     note = (getattr(product, "price_note", "") or "").strip()
+    regular = getattr(product, "regular_price", None)
+    # Promoção só com saldo no Mercado Pago: nem todo mundo tem, então a mensagem diz o preço sem saldo.
+    without_mp = _money(regular) if is_mercado_pago(note) and regular and price is not None and regular > price else ""
+    condition = f" {note}" if note and price is not None else ""
+    if without_mp:
+        condition += f" (sem saldo: R$ {without_mp})"
     return {
         "titulo": (product.title or "").strip(),
         "preco_de": _money(original) if discount is not None else "",
@@ -60,7 +73,8 @@ def _values(product: Product) -> dict[str, str]:
         "link": (product.affiliate_url or "").strip(),
         "loja": (product.store or "").strip(),
         "categoria": (product.category or "").strip(),
-        "condicao": f" {note}" if note and price is not None else "",
+        "condicao": condition,
+        "preco_sem_mp": without_mp,
         "desconto": f" ({discount}% OFF)" if discount else "",
         "desconto_pct": str(discount) if discount else "",
     }

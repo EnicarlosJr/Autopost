@@ -8,7 +8,7 @@ import type {BestPick, CampaignSearch, Gender, OfferKind, OfficialCategory, Sear
 import type {Niche} from '../types/catalog';
 import CategoryTree, {OfficialChip} from './CategoryTree';
 import {MultiPick, SelectAll, useConfirm} from './Bulk';
-import {PriceTag} from './Ui';
+import {PaymentNote, PriceTag} from './Ui';
 import {DeleteIcon, RefreshIcon} from './Icons';
 import {tokens} from '../theme';
 
@@ -406,7 +406,8 @@ export default function CampaignSearchPanel({campaignId, defaults, niches = [], 
             <Box flex={1} minWidth={0}>
               <Typography fontSize={14.5} fontWeight={600} sx={{display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden'}}>
                 <a href={r.url} target="_blank" rel="noreferrer" style={{color: 'inherit'}}>{r.title}</a></Typography>
-              <Box my={.5}><PriceTag price={r.price} original={r.original_price} note={r.price_note} size="sm"/></Box>
+              <Box my={.5}><PriceTag price={r.price} original={r.original_price} note={r.price_note} size="sm"/>
+                <PaymentNote note={r.price_note} regular={r.regular_price}/></Box>
               <Stack direction="row" gap={.5} flexWrap="wrap" alignItems="center">
                 {r.ml_category_id ? <OfficialChip cat={{id: r.ml_category_id, include_children: false, name: r.category_name || r.ml_category_id, path: r.category_path, is_leaf: true}}/>
                   : <Chip size="small" variant="outlined" label="Categoria não identificada"/>}

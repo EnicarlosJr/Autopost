@@ -61,7 +61,8 @@ backend/migrations/versions/   0001 → 0019 (0011 catálogo, 0012–0013 busca 
                                campanha personalizada, 0020 listas escolares,
                                0021 página pública e responsáveis, 0022 busca de equivalentes, preço no cartão
                                e condições (regular_price, price_conditions), conferência do link (affiliate_ok),
-                               0023 listings.regular_price ("ou R$ X em outros meios" nas buscas e ofertas))
+                               0023 listings.regular_price ("ou R$ X em outros meios" nas buscas e ofertas),
+                               0024 automation_rules.mp_help_whatsapp/mp_help_message (convite "Quero ajuda pelo WhatsApp"))
 backend/tests/                 pytest (README diz 74 testes); fixture HTML do ML
 extension/
   background.js   service worker: recebe pedidos do painel, roda a fila automática e as buscas
@@ -104,7 +105,7 @@ tests_e2e/        Playwright com páginas simuladas do ML e do WhatsApp (7 teste
 - **Perfil = `automation_rules` (linha única).** Editado em Meu perfil > Mensagem e foto (`StyleSettings.tsx`, `TemplateEditor.tsx`); Configurações ficou só com a automação dos produtos e o histórico.
 - **Foto (`social_image.compose`):** desenhada em 2x e reduzida (bordas suaves); selo #publi no canto superior esquerdo, selo de desconto (≥ 5%) no superior direito, faixa no rodapé com grupo à esquerda e Instagram à direita (fonte encolhe para caber); com selo, o topo ganha respiro. Cache em disco com chave `v2|…`.
 - **Forma de envio** (`send_mode`): `preview` (só texto; o WhatsApp monta o cartão do link) ou foto + texto (imagem 1080x1080 com legenda e marca d'água opcional). Definida por campanha, pelas Configurações para ofertas avulsas, e por publicação (`send_mode_choice`) na Fila.
-- **Listas escolares:** preço da página dos pais = `regular_price` (cartão) quando o destaque depende de Pix/Mercado Pago; `price` continua sendo o preço em destaque (usado nas mensagens). `availability = "indisponível"` tira a opção da página dos pais sem apagar nada. Equivalentes só sugerem (regra 9).
+- **Listas escolares:** a página dos pais pergunta "Você tem saldo no Mercado Pago?" (resposta guardada no navegador). Preço de cada opção (`page_data`: `price` = cartão/outros meios, `pay_price` + `pay_kind` "pix" | "mp"): Pix vale para todos; saldo no Mercado Pago só para quem disse que tem; senão, o preço normal. `price` do produto continua sendo o preço em destaque (usado nas mensagens). Promoção com saldo no Mercado Pago na mensagem: `{condicao}` vira " com saldo no Mercado Pago (sem saldo: R$ X)" e existe `{preco_sem_mp}`; no painel, `PaymentNote` (Ui.tsx) explica nos resultados da campanha e nas sugestões/opções das listas. Quem responde "Não tenho" vê o convite "Quero ajuda pelo WhatsApp" (`service.whatsapp_link`, wa.me com a mensagem pronta; número e mensagem em Listas escolares > "Ajuda com o Mercado Pago", rota `/api/school-lists/settings/mp-help`; sem número, sem convite). Página dos pais em vermelho (`--navy` = #C62828). Turmas: etiquetas com excluir e renomear; "Editar lista" muda escola, série e ano. `availability = "indisponível"` tira a opção da página dos pais sem apagar nada. Equivalentes só sugerem (regra 9).
 - **Produto:** `pending` → `processed` | `needs_review` | `awaiting_browser` (ML: a extensão completa os dados).
 - **Publicação, ativos:** `pending`, `awaiting_approval`, `approved` (Prontas), `scheduled`, `sending`, `paused`. **Finais:** `sent`, `failed`, `cancelled`.
 - **Busca da campanha:** `queued` → buscando → concluída / sem resultados / falhou (com lease de 10 min, até 10 termos).
@@ -164,7 +165,7 @@ Cuidados: o roteiro se baseia em resumos de terceiros dos Termos do ML, então o
 ## Convenções
 
 - Textos de interface, erros e comentários em PT-BR, frases curtas e diretas.
-- Toda mudança de schema vem com migração Alembic numerada (próxima: `0024_…`), idempotente (checa colunas com `inspect`, como as atuais).
+- Toda mudança de schema vem com migração Alembic numerada (próxima: `0025_…`), idempotente (checa colunas com `inspect`, como as atuais).
 - Listas da API aceitam `limit`/`offset` e devolvem `X-Total-Count`.
 - Seletores do WhatsApp só em `whatsapp.js > sendInWhatsApp`; leitura de página só em `reader.js`/`search_reader.js`.
 - Ao mudar regra de negócio: atualizar o teste correspondente e o README.

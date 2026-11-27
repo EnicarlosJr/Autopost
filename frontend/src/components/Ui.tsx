@@ -50,6 +50,16 @@ export function PriceTag({price, original, note, size = 'md'}: {price: number | 
   </Stack>;
 }
 
+/** Explica o preço que depende do pagamento: saldo no Mercado Pago (nem todo mundo tem) ou Pix. */
+export function PaymentNote({note, regular}: {note?: string; regular?: number | null}) {
+  const text = (note || '').toLowerCase();
+  if (text.includes('mercado pago')) return <Box sx={{mt: .5, px: 1, py: .5, borderRadius: 1.5, bgcolor: '#FFF3CC', fontSize: 12.5, lineHeight: 1.4}}>
+    <b>Promoção só com saldo no Mercado Pago.</b> Nem todo mundo tem saldo{regular ? <>: sem saldo, sai por <b>{brl(regular)}</b>.</> : '.'}
+  </Box>;
+  if (text.includes('pix') && regular) return <Typography fontSize={12.5} color="text.secondary" mt={.25}>No Pix. No cartão: {brl(regular)}</Typography>;
+  return null;
+}
+
 /** Ponto de estado com texto (extensão, WhatsApp, envio automático). */
 export function StatusDot({ok, label, warn}: {ok: boolean; label: ReactNode; warn?: boolean}) {
   const color = ok ? '#3DDC97' : warn ? tokens.sticker : '#FF8A80';

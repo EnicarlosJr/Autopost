@@ -10,7 +10,7 @@ export type SchoolOption = {
 
 export type SchoolSuggestion = {
   listing_id: number; external_id: string; url: string; link: string; title: string; price: number; original_price: number | null;
-  price_note: string; image_url: string; seller: string; rating: number | null; sold: number | null; official_store: boolean;
+  price_note: string; regular_price?: number | null; image_url: string; seller: string; rating: number | null; sold: number | null; official_store: boolean;
   fulfillment: boolean; free_shipping: boolean; catalog_product_id: string | null; score: number; signals: string[];
 };
 
